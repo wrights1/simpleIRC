@@ -18,6 +18,8 @@
 
 #include <arpa/inet.h>
 
+#define DEBUG 1
+
 //Free old memory and returns an array with the double the size of the old one and the same elements
 char * doubleSize(char * oldPoint, int ptrlen){
     char * newPoint;
@@ -65,13 +67,49 @@ int recvNotAll(int socket){
 	char * buf;
 	int bufLength = 1024;
 	buf = calloc(sizeof(char), bufLength);
-	int received = recv(socket, buf, bufLength,0);
-	fprintf(stderr, "received\n");
-	if(received == 0 || received == -1 ){
-		return -1;
-	}
-	fprintf(stderr, "recv len = %d\n", received );
-	fprintf(stderr, "recv buf = %s", buf);
+    int received = 0;
+    while (received != 0 || received != -1)
+    {
+        fprintf(stderr, "about to receive\n");
+        int received = recv(socket, buf, bufLength,0);
+        fprintf(stderr, "received\n");
+        if(received == 0 || received == -1 ){
+            return -1;
+        }
+        fprintf(stderr, "recv len = %d\n", received );
+        fprintf(stderr, "recv buf = %s", buf);
+    }
+    return 0;
+}
+
+int chat(int socket){
+    /*
+    sends initial NICK and USER commands, now must get input from stdin
+    */
+        char * user = getlogin();// gets current unix username
+        int nicklen = strlen(user)+8;
+        char nickmsg[nicklen];
+        snprintf(nickmsg, nicklen, "NICK %s\r\n", user);
+        int n = sendall(socket, nickmsg, nicklen-1);
+
+        #if DEBUG
+        fprintf(stderr, "USERNAME = %s\n", user );
+        fprintf(stderr, "sizeof(user) = %lu\n", strlen(user));
+        fprintf(stderr, "MSG = %s\n", nickmsg);
+        #endif
+
+        int userlen = (strlen(user)*2)+13;
+        char usermsg[userlen];
+        snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
+        n = sendall(socket, usermsg, userlen-1);
+
+        recvNotAll(socket);
+        // should use select or poll instead of a receive function
+        // so whenever there is response from server, it will be output without
+        // having to call a function or check that socket
+
+        // the only 2 sockets being monitored by select on the client side are
+        // stdin and the IRC server socket (input and output)
 }
 
 
@@ -88,7 +126,6 @@ void *get_in_addr(struct sockaddr *sa)
 int main(int *argc, char **argv)
 {
 	int sockfd, numbytes;
-	char buf[100];
 	struct addrinfo hints, *servinfo, *p;
 	int rv;
 
@@ -119,35 +156,7 @@ int main(int *argc, char **argv)
 
 	freeaddrinfo(servinfo); // all done with this structure
 
-    // if (recvStatus(sockfd) != 220 ) {
-	//     perror("Connection Refused");
-	//     exit(1);
-	// }
-
-	char * msg = "NICK root\r\n";
-    int length = 11;
-	int n = sendall(sockfd, msg, length);
-
-	recvNotAll(sockfd);
-
-	msg = "USER root 0 * :root\r\n";
-	length = 20;
-	n = sendall(sockfd, msg, length);
-
-	recvNotAll(sockfd);
-	recvNotAll(sockfd);
-	recvNotAll(sockfd);
-
-	//recvNotAll(sockfd);
-
-	msg = "NICK root1\r\n";
-	length = 12;
-	n = sendall(sockfd, msg, length);
-
-	fprintf(stderr, "in main again!\n" );
-	recvNotAll(sockfd);
-    recvNotAll(sockfd);
-    recvNotAll(sockfd);
+	chat(sockfd);
 
     close(sockfd);
 
