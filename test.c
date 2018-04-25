@@ -156,7 +156,39 @@ int main(int *argc, char **argv)
 
 	freeaddrinfo(servinfo); // all done with this structure
 
+<<<<<<< HEAD
 	chat(sockfd);
+=======
+    // if (recvStatus(sockfd) != 220 ) {
+	//     perror("Connection Refused");
+	//     exit(1);
+	// }
+
+	char * msg = "NICK cs375\r\n";
+    int length = 11;
+	int n = sendall(sockfd, msg, length);
+
+	// recvNotAll(sockfd);
+
+	msg = "USER cs375 0 * :cs375\r\n";
+	length = 20;
+	n = sendall(sockfd, msg, length);
+
+	recvNotAll(sockfd);
+	recvNotAll(sockfd);
+	recvNotAll(sockfd);
+
+	//recvNotAll(sockfd);
+
+	// msg = "NICK root1\r\n";
+	// length = 12;
+	// n = sendall(sockfd, msg, length);
+
+	fprintf(stderr, "in main again!\n" );
+	recvNotAll(sockfd);
+    recvNotAll(sockfd);
+    recvNotAll(sockfd);
+>>>>>>> 1b85e7b8a8f9c8299e8c058f48037baca2e848ef
 
     close(sockfd);
 
