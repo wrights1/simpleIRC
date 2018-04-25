@@ -124,13 +124,13 @@ int main(int *argc, char **argv)
 	//     exit(1);
 	// }
 
-	char * msg = "NICK root\r\n";
+	char * msg = "NICK cs375\r\n";
     int length = 11;
 	int n = sendall(sockfd, msg, length);
 
-	recvNotAll(sockfd);
+	// recvNotAll(sockfd);
 
-	msg = "USER root 0 * :root\r\n";
+	msg = "USER cs375 0 * :cs375\r\n";
 	length = 20;
 	n = sendall(sockfd, msg, length);
 
@@ -140,9 +140,9 @@ int main(int *argc, char **argv)
 
 	//recvNotAll(sockfd);
 
-	msg = "NICK root1\r\n";
-	length = 12;
-	n = sendall(sockfd, msg, length);
+	// msg = "NICK root1\r\n";
+	// length = 12;
+	// n = sendall(sockfd, msg, length);
 
 	fprintf(stderr, "in main again!\n" );
 	recvNotAll(sockfd);
