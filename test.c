@@ -19,17 +19,7 @@
 #include <arpa/inet.h>
 
 #define DEBUG 1
-
-//Free old memory and returns an array with the double the size of the old one and the same elements
-char * doubleSize(char * oldPoint, int ptrlen){
-    char * newPoint;
-    newPoint = calloc(sizeof(char) , (ptrlen*2));
-
-    strcpy(newPoint, oldPoint);
-    free(oldPoint);
-   // oldPoint = newPoint;
-    return newPoint;
-}
+#define STDIN 0  // file descriptor for standard input
 
 int sendall(int s, char *buf, int len){
 /*
@@ -41,9 +31,6 @@ int sendall(int s, char *buf, int len){
         -len: The length of the character buffer
     Return:
         - A -1 if a failure and a 0 on success
-    int total = 0; // how many bytes we've spent
-    int bytesleft = *len; // how many we have left to send
-    int n;
 */
 	int total = 0; // how many bytes we've spent
 	int bytesleft = len; // how many we have left to send
@@ -63,24 +50,23 @@ int sendall(int s, char *buf, int len){
     return n == -1?-1:0; // return -1 on failure, 0 on success
 }
 
-int recvNotAll(int socket){
-	char * buf;
-	int bufLength = 1024;
-	buf = calloc(sizeof(char), bufLength);
-    int received = 0;
-    while (received != 0 || received != -1)
-    {
-        fprintf(stderr, "about to receive\n");
-        int received = recv(socket, buf, bufLength,0);
-        fprintf(stderr, "received\n");
-        if(received == 0 || received == -1 ){
-            return -1;
-        }
-        fprintf(stderr, "recv len = %d\n", received );
-        fprintf(stderr, "recv buf = %s", buf);
-    }
-    return 0;
-}
+// int recvNotAll(int socket){
+// 	char * buf;
+// 	int bufLength = 1024;
+// 	buf = calloc(sizeof(char), bufLength);
+//     int received = 0;
+//     while (received != 0 || received != -1)
+//     {
+//         fprintf(stderr, "about to receive\n");
+//         int received = recv(socket, buf, bufLength,0);
+//         fprintf(stderr, "received\n");
+//         if(received == 0 || received == -1 ){
+//             return -1;
+//         }
+//         fprintf(stderr, "recv buf = %s", buf);
+//     }
+//     return 0;
+// }
 
 int chat(int socket){
     /*
@@ -103,13 +89,44 @@ int chat(int socket){
         snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
         n = sendall(socket, usermsg, userlen-1);
 
-        recvNotAll(socket);
-        // should use select or poll instead of a receive function
-        // so whenever there is response from server, it will be output without
+        #if DEBUG
+        fprintf(stderr, "MSG = %s\n", usermsg);
+        #endif
+
+        // whenever there is response from server, it will be output without
         // having to call a function or check that socket
 
         // the only 2 sockets being monitored by select on the client side are
         // stdin and the IRC server socket (input and output)
+
+        fd_set readfds;
+
+        while (1){
+            FD_ZERO(&readfds);
+            FD_SET(STDIN, &readfds);
+            FD_SET(socket, &readfds);
+
+            select(socket+1, &readfds, NULL, NULL, NULL);
+
+            if (FD_ISSET(STDIN, &readfds)){
+                fprintf(stderr, "User input\n");
+                char *str;
+                size_t bufSize = 255;
+                getline(&str,&bufSize,stdin);
+                //fprintf(stderr, "%s\n", str);
+                sendall(socket, str, strlen(str));
+            }
+            if (FD_ISSET(socket, &readfds)){
+                fprintf(stderr, "server response\n");
+                char * buf;
+                int bufLength = 1024;
+                buf = calloc(sizeof(char), bufLength);
+                int received = recv(socket, buf, bufLength,0);
+                fprintf(stderr, "%s", buf);
+                free(buf);
+            }
+        }
+        return 0;
 }
 
 
@@ -156,39 +173,7 @@ int main(int *argc, char **argv)
 
 	freeaddrinfo(servinfo); // all done with this structure
 
-<<<<<<< HEAD
 	chat(sockfd);
-=======
-    // if (recvStatus(sockfd) != 220 ) {
-	//     perror("Connection Refused");
-	//     exit(1);
-	// }
-
-	char * msg = "NICK cs375\r\n";
-    int length = 11;
-	int n = sendall(sockfd, msg, length);
-
-	// recvNotAll(sockfd);
-
-	msg = "USER cs375 0 * :cs375\r\n";
-	length = 20;
-	n = sendall(sockfd, msg, length);
-
-	recvNotAll(sockfd);
-	recvNotAll(sockfd);
-	recvNotAll(sockfd);
-
-	//recvNotAll(sockfd);
-
-	// msg = "NICK root1\r\n";
-	// length = 12;
-	// n = sendall(sockfd, msg, length);
-
-	fprintf(stderr, "in main again!\n" );
-	recvNotAll(sockfd);
-    recvNotAll(sockfd);
-    recvNotAll(sockfd);
->>>>>>> 1b85e7b8a8f9c8299e8c058f48037baca2e848ef
 
     close(sockfd);
 
