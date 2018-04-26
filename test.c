@@ -100,6 +100,7 @@ int chat(int socket){
         // stdin and the IRC server socket (input and output)
 
         fd_set readfds;
+		char* channel = NULL;
 
         while (1){
             FD_ZERO(&readfds);
@@ -109,15 +110,55 @@ int chat(int socket){
             select(socket+1, &readfds, NULL, NULL, NULL);
 
             if (FD_ISSET(STDIN, &readfds)){
-                fprintf(stderr, "User input\n");
-                char *str;
-                size_t bufSize = 255;
+                // user input
+				size_t bufSize = 255;
+                char *str = (char*) calloc(bufSize,1);
                 getline(&str,&bufSize,stdin);
-                //fprintf(stderr, "%s\n", str);
-                sendall(socket, str, strlen(str));
+
+				if (str[0] == '/' ) {
+					// is command, send exactly what user typed but without / at beginning
+					char line[256];  //  copy of str to be tokenized
+					strcpy(line, str);
+					char * command = NULL;
+					command = strtok(line," ");
+					if (command) {
+						command = command + sizeof(char); //just command without /
+						fprintf(stderr, "command = X%sX\n", command);
+					}
+					if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
+						// only update channel var on join commands
+						channel = strtok(NULL,"#"); // extract channel name
+						if ( channel != NULL) {
+							channel[strlen(channel)-1] = 0; // remove newline
+							//fprintf(stderr, "channel = %s\n", channel);
+						}
+						str = str + sizeof(char); // remove leading "/"
+						sendall(socket, str, strlen(str));
+					}
+					else{
+						str = str + sizeof(char); // remove "/"
+						sendall(socket, str, strlen(str));
+					}
+				}
+				else{
+					// is message, send as PRIVMSG to channel (must keep track of current channel)
+					if (channel != NULL){
+						int prefixlen = strlen(channel)+12;
+						char prefix[prefixlen];
+						snprintf(prefix, prefixlen, "PRIVMSG #%s :",channel);
+						strncat(prefix, str, strlen(str));
+						prefix[strlen(prefix)-1] = 13; // 13 = 0x0D = \r
+						prefix[strlen(prefix)] = 10; // 10 = =x0A = \nq
+						sendall(socket, prefix, strlen(str) + prefixlen);
+					}
+					else{
+                		sendall(socket, str, strlen(str));
+					}
+				}
+				//free(str);
             }
             if (FD_ISSET(socket, &readfds)){
-                fprintf(stderr, "server response\n");
+                // server response
                 char * buf;
                 int bufLength = 1024;
                 buf = calloc(sizeof(char), bufLength);
