@@ -50,28 +50,9 @@ int sendall(int s, char *buf, int len){
     return n == -1?-1:0; // return -1 on failure, 0 on success
 }
 
-// int recvNotAll(int socket){
-// 	char * buf;
-// 	int bufLength = 1024;
-// 	buf = calloc(sizeof(char), bufLength);
-//     int received = 0;
-//     while (received != 0 || received != -1)
-//     {
-//         fprintf(stderr, "about to receive\n");
-//         int received = recv(socket, buf, bufLength,0);
-//         fprintf(stderr, "received\n");
-//         if(received == 0 || received == -1 ){
-//             return -1;
-//         }
-//         fprintf(stderr, "recv buf = %s", buf);
-//     }
-//     return 0;
-// }
-
 int chat(int socket){
-    /*
-    sends initial NICK and USER commands, now must get input from stdin
-    */
+
+	    //send initial NICK and USER commands
         char * user = getlogin();// gets current unix username
         int nicklen = strlen(user)+8;
         char nickmsg[nicklen];
@@ -99,6 +80,25 @@ int chat(int socket){
         // the only 2 sockets being monitored by select on the client side are
         // stdin and the IRC server socket (input and output)
 
+		/* ~~~~~~~~~~~~~~~~~~~~~~~~~  CURRENT FEATURES ~~~~~~~~~~~~~~~~~~~~~~~~
+			- /CLOSE
+				- leaves channel
+			- /QUIT
+				- disconnects from server and closes program
+			- /JOIN
+			- any real IRC command can be sent with /<command> and will work if
+			  properly formatted according to RFCs
+			- if no "/", input is sent as PRIVMSG to current channel/buffer
+		~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+
+		/* TODO
+			- send PINGs and handle PONG replies (or send PONGs and handle PING replies, check RFCs)
+				- these prevent server timeout, client will disconnect after 240(?) seconds if no ping recieved
+			- UI/formatting to make more readable
+			- any other client responsibilities?
+			- memory management?
+		*/
+
         fd_set readfds;
 		char* channel = NULL;
 
@@ -117,27 +117,42 @@ int chat(int socket){
 
 				if (str[0] == '/' ) {
 					// is command, send exactly what user typed but without / at beginning
-					char line[256];  //  copy of str to be tokenized
-					strcpy(line, str);
+					char line[256];
+					strcpy(line, str);  // copy of str to be tokenized
 					char * command = NULL;
-					command = strtok(line," ");
-					if (command) {
-						command = command + sizeof(char); //just command without /
-						fprintf(stderr, "command = X%sX\n", command);
-					}
-					if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
-						// only update channel var on join commands
-						channel = strtok(NULL,"#"); // extract channel name
-						if ( channel != NULL) {
-							channel[strlen(channel)-1] = 0; // remove newline
-							//fprintf(stderr, "channel = %s\n", channel);
+					command = strtok(line," \n");
+					if (command != NULL){
+						command = command + sizeof(char); //remove  "/"
+						fprintf(stderr, "command = %s\n", command);
+						if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
+							char channel_line[256];
+							strcpy(channel_line, str);
+							channel = strtok(channel_line,"#");
+							channel = strtok(NULL,"#"); // only update channel var on join command
+							if ( channel != NULL) {
+								channel[strlen(channel)-1] = 0; // remove newline
+								//fprintf(stderr, "channel = %s\n", channel);
+							}
+							str = str + sizeof(char); // remove leading "/"
+							sendall(socket, str, strlen(str));
 						}
-						str = str + sizeof(char); // remove leading "/"
-						sendall(socket, str, strlen(str));
-					}
-					else{
-						str = str + sizeof(char); // remove "/"
-						sendall(socket, str, strlen(str));
+						else if ( channel != NULL && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
+							int partlen = strlen(channel)+8;
+							char part[partlen];
+							snprintf(part, partlen, "PART #%s",channel);
+							part[partlen-2] = 13; // 13 = 0x0D = \r
+							part[partlen-1] = 10; // 10 = =x0A = \n
+							sendall(socket, part, partlen);
+						}
+						else if (strcmp("quit",command) == 0 || strcmp("QUIT",command) == 0){
+							str = str + sizeof(char);
+							sendall(socket, str, strlen(str));
+							exit(0);
+						}
+						else {
+							str = str + sizeof(char); // remove "/", send unmodified input
+							sendall(socket, str, strlen(str));
+						}
 					}
 				}
 				else{
@@ -148,7 +163,7 @@ int chat(int socket){
 						snprintf(prefix, prefixlen, "PRIVMSG #%s :",channel);
 						strncat(prefix, str, strlen(str));
 						prefix[strlen(prefix)-1] = 13; // 13 = 0x0D = \r
-						prefix[strlen(prefix)] = 10; // 10 = =x0A = \nq
+						prefix[strlen(prefix)] = 10; // 10 = =x0A = \n
 						sendall(socket, prefix, strlen(str) + prefixlen);
 					}
 					else{
@@ -163,6 +178,22 @@ int chat(int socket){
                 int bufLength = 1024;
                 buf = calloc(sizeof(char), bufLength);
                 int received = recv(socket, buf, bufLength,0);
+				/*
+				// the following code extracts username and message content from
+				// PRIVMSG responses from the server
+				// TODO make user interface more readable/formatted like
+				// output "root: hello" instead of "":root!root@123.435.678.980 PRIVMSG :hello"
+				char in[256];
+				strcpy(in, buf);  // copy of str to be tokenized
+				char * username = NULL;
+				username = strtok(in,"!");
+				username = username + sizeof(char);
+				fprintf(stderr, "username = %s\n", username);
+				char * content = NULL;
+				content = strtok(NULL,":");
+				content = strtok(NULL,":");
+				fprintf(stderr, "content = %s\n", content);
+				*/
                 fprintf(stderr, "%s", buf);
                 free(buf);
             }
