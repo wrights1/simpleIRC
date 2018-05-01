@@ -15,10 +15,11 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <regex.h>
 
 #include <arpa/inet.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define STDIN 0  // file descriptor for standard input
 
 int sendall(int s, char *buf, int len){
@@ -37,7 +38,6 @@ int sendall(int s, char *buf, int len){
 	int n;
 
     while(total < len){
-		fprintf(stderr, "sending\n");
         n = send(s, buf+total, bytesleft, 0);
         if (n == -1){
             break;
@@ -143,6 +143,7 @@ int chat(int socket){
 							part[partlen-2] = 13; // 13 = 0x0D = \r
 							part[partlen-1] = 10; // 10 = =x0A = \n
 							sendall(socket, part, partlen);
+							channel = NULL;
 						}
 						else if (strcmp("quit",command) == 0 || strcmp("QUIT",command) == 0){
 							str = str + sizeof(char);
@@ -178,22 +179,43 @@ int chat(int socket){
                 int bufLength = 1024;
                 buf = calloc(sizeof(char), bufLength);
                 int received = recv(socket, buf, bufLength,0);
-				/*
-				// the following code extracts username and message content from
-				// PRIVMSG responses from the server
-				// TODO make user interface more readable/formatted like
-				// output "root: hello" instead of "":root!root@123.435.678.980 PRIVMSG :hello"
-				char in[256];
-				strcpy(in, buf);  // copy of str to be tokenized
-				char * username = NULL;
-				username = strtok(in,"!");
-				username = username + sizeof(char);
-				fprintf(stderr, "username = %s\n", username);
-				char * content = NULL;
-				content = strtok(NULL,":");
-				content = strtok(NULL,":");
-				fprintf(stderr, "content = %s\n", content);
-				*/
+
+				regex_t regex;
+				int reti;
+				char msgbuf[100];
+				regmatch_t pmatch[3];
+
+				/* Compile regular expression to capture username and message content  */
+				reti = regcomp(&regex, "^:(.*)!.*:(.*)$", REG_ICASE|REG_EXTENDED);
+				if (reti) {
+				    fprintf(stderr, "Could not compile regex\n");
+				    exit(1);
+				}
+
+				/* Execute regular expression to extract matches */
+				reti = regexec(&regex, buf, 3, pmatch, 0);
+				if (!reti) {
+					int nicklen = pmatch[1].rm_eo - pmatch[1].rm_so;
+					char * nick = (char*) calloc(nicklen,1);
+					memcpy(nick, buf + pmatch[1].rm_so, nicklen);
+
+					int contentlen = (pmatch[2].rm_eo - pmatch[2].rm_so)-1;
+					char * content = (char*) calloc(contentlen,1);
+					memcpy(content, buf + pmatch[2].rm_so, contentlen);
+
+					fprintf(stderr, "%s: %s\n", nick, content);
+					free(nick);
+					free(content);
+
+				}
+				else if (reti != REG_NOMATCH) {
+				    regerror(reti, &regex, msgbuf, sizeof(msgbuf));
+				    fprintf(stderr, "Regex match failed: %s\n", msgbuf);
+				    exit(1);
+				}
+
+				regfree(&regex);
+
                 fprintf(stderr, "%s", buf);
                 free(buf);
             }
