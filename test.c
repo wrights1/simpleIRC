@@ -50,54 +50,132 @@ int sendall(int s, char *buf, int len){
     return n == -1?-1:0; // return -1 on failure, 0 on success
 }
 
+void init(int socket){
+	/*
+	send bootstrap NICK and USER messages
+	*/
+	char * user = getlogin();// gets current unix username
+	int nicklen = strlen(user)+8;
+	char nickmsg[nicklen];
+	snprintf(nickmsg, nicklen, "NICK %s\r\n", user);
+	int n = sendall(socket, nickmsg, nicklen-1);
+
+	#if DEBUG
+	fprintf(stderr, "USERNAME = %s\n", user );
+	fprintf(stderr, "sizeof(user) = %lu\n", strlen(user));
+	fprintf(stderr, "MSG = %s\n", nickmsg);
+	#endif
+
+	int userlen = (strlen(user)*2)+13;
+	char usermsg[userlen];
+	snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
+	n = sendall(socket, usermsg, userlen-1);
+
+	#if DEBUG
+	fprintf(stderr, "MSG = %s\n", usermsg);
+	#endif
+}
+
+void parse_response(char* buf){
+	/*
+	takes raw server response and prints user-friendly things to the terminal
+
+	*/
+		regex_t regex;
+		int reti;
+		int privmsg = 0;
+		int part = 0;
+		int join = 0;
+		regmatch_t pmatch[4];
+
+		/* Compile regular expression to capture username and message content  */
+		reti = regcomp(&regex, "^:(.*)!.* ([a-zA-Z]*) .*:(.*)$", REG_ICASE|REG_EXTENDED);
+		// if (reti) {
+		// 	fprintf(stderr, "Could not compile regex\n");
+		// 	exit(1);
+		// }
+
+		/* Execute regular expression to extract matches */
+
+		reti = regexec(&regex, buf, 4, pmatch, 0);
+		if (!reti) {
+			int cmdlen = pmatch[2].rm_eo - pmatch[2].rm_so;
+			char * cmd = (char*) calloc(cmdlen,1);
+			memcpy(cmd, buf + pmatch[2].rm_so, cmdlen);
+			//fprintf(stderr, "cmd = %s\n", cmd);
+
+			if (strcmp("PART", cmd) == 0 )
+				part = 1;
+			if (strcmp("PRIVMSG", cmd) == 0 )
+				privmsg = 1;
+			if (strcmp("JOIN", cmd) == 0)
+				join = 1;
+
+			int nicklen = pmatch[1].rm_eo - pmatch[1].rm_so;
+			char * nick = (char*) calloc(nicklen,1);
+			memcpy(nick, buf + pmatch[1].rm_so, nicklen);
+
+			int contentlen = (pmatch[3].rm_eo - pmatch[3].rm_so)-1;
+			char * content = (char*) calloc(contentlen,1);
+			memcpy(content, buf + pmatch[3].rm_so, contentlen);
+
+			if (part){
+				fprintf(stderr, " ~~~~ %s left the channel. ~~~~\n", nick);
+			}
+			if (privmsg) {
+				fprintf(stderr, "%s: %s\n", nick, content);
+			}
+			if (join) {
+				fprintf(stderr, "~~~~ %s has joined the channel. ~~~~\n", nick);
+			}
+
+			free(nick);
+			free(content);
+			free(cmd);
+		}
+
+		else if (reti != REG_NOMATCH) {
+			fprintf(stderr, "Regex match failed\n");
+			exit(1);
+		}
+
+		if (!privmsg && !part && !join){
+			fprintf(stderr, "%s", buf);
+		}
+
+		regfree(&regex);
+}
+
 int chat(int socket){
+	/*
+		whenever there is response from server, it will be output without
+		having to call a function or check that socket
+
+		the only 2 sockets being monitored by select on the client side are
+		stdin and the IRC server socket (input and output)
+	*/
+
+	/* ~~~~~~~~~~~~~~~~~~~~~~~~~  CURRENT FEATURES ~~~~~~~~~~~~~~~~~~~~~~~~
+		- /CLOSE
+			- leaves channel
+		- /QUIT
+			- disconnects from server and closes program
+		- /JOIN
+		- any real IRC command can be sent with /<command> and will work if
+		  properly formatted according to RFCs
+		- if no "/", input is sent as PRIVMSG to current channel/buffer
+	~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+
+	/* TODO
+		- send PINGs and handle PONG replies (or send PONGs and handle PING replies, check RFCs)
+			- these prevent server timeout, client will disconnect after 240(?) seconds if no ping recieved
+		- UI/formatting to make more readable
+		- any other client responsibilities?
+		- memory management?
+	*/
 
 	    //send initial NICK and USER commands
-        char * user = getlogin();// gets current unix username
-        int nicklen = strlen(user)+8;
-        char nickmsg[nicklen];
-        snprintf(nickmsg, nicklen, "NICK %s\r\n", user);
-        int n = sendall(socket, nickmsg, nicklen-1);
-
-        #if DEBUG
-        fprintf(stderr, "USERNAME = %s\n", user );
-        fprintf(stderr, "sizeof(user) = %lu\n", strlen(user));
-        fprintf(stderr, "MSG = %s\n", nickmsg);
-        #endif
-
-        int userlen = (strlen(user)*2)+13;
-        char usermsg[userlen];
-        snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
-        n = sendall(socket, usermsg, userlen-1);
-
-        #if DEBUG
-        fprintf(stderr, "MSG = %s\n", usermsg);
-        #endif
-
-        // whenever there is response from server, it will be output without
-        // having to call a function or check that socket
-
-        // the only 2 sockets being monitored by select on the client side are
-        // stdin and the IRC server socket (input and output)
-
-		/* ~~~~~~~~~~~~~~~~~~~~~~~~~  CURRENT FEATURES ~~~~~~~~~~~~~~~~~~~~~~~~
-			- /CLOSE
-				- leaves channel
-			- /QUIT
-				- disconnects from server and closes program
-			- /JOIN
-			- any real IRC command can be sent with /<command> and will work if
-			  properly formatted according to RFCs
-			- if no "/", input is sent as PRIVMSG to current channel/buffer
-		~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-
-		/* TODO
-			- send PINGs and handle PONG replies (or send PONGs and handle PING replies, check RFCs)
-				- these prevent server timeout, client will disconnect after 240(?) seconds if no ping recieved
-			- UI/formatting to make more readable
-			- any other client responsibilities?
-			- memory management?
-		*/
+		init(socket);
 
         fd_set readfds;
 		char* channel = NULL;
@@ -106,6 +184,12 @@ int chat(int socket){
             FD_ZERO(&readfds);
             FD_SET(STDIN, &readfds);
             FD_SET(socket, &readfds);
+			if (channel != NULL){
+				fprintf(stderr, "[%s] ", channel);
+			}
+			else{
+				fprintf(stderr, "[simpleIRC] ");
+			}
 
             select(socket+1, &readfds, NULL, NULL, NULL);
 
@@ -123,7 +207,6 @@ int chat(int socket){
 					command = strtok(line," \n");
 					if (command != NULL){
 						command = command + sizeof(char); //remove  "/"
-						fprintf(stderr, "command = %s\n", command);
 						if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
 							char channel_line[256];
 							strcpy(channel_line, str);
@@ -135,6 +218,7 @@ int chat(int socket){
 							}
 							str = str + sizeof(char); // remove leading "/"
 							sendall(socket, str, strlen(str));
+							fprintf(stderr, " ======================== JOINED CHANNEL %s ======================= \n", channel );
 						}
 						else if ( channel != NULL && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
 							int partlen = strlen(channel)+8;
@@ -143,6 +227,11 @@ int chat(int socket){
 							part[partlen-2] = 13; // 13 = 0x0D = \r
 							part[partlen-1] = 10; // 10 = =x0A = \n
 							sendall(socket, part, partlen);
+							fprintf(stderr, " ======================== CLOSED CHANNEL %s ======================= \n", channel );
+							/*
+								TODO????
+								keep track of previous channels so you can join channels from other channels (or maybe just don't allow JOIN at all if already in a channel)
+							*/
 							channel = NULL;
 						}
 						else if (strcmp("quit",command) == 0 || strcmp("QUIT",command) == 0){
@@ -179,44 +268,9 @@ int chat(int socket){
                 int bufLength = 1024;
                 buf = calloc(sizeof(char), bufLength);
                 int received = recv(socket, buf, bufLength,0);
-
-				regex_t regex;
-				int reti;
-				char msgbuf[100];
-				regmatch_t pmatch[3];
-
-				/* Compile regular expression to capture username and message content  */
-				reti = regcomp(&regex, "^:(.*)!.*:(.*)$", REG_ICASE|REG_EXTENDED);
-				if (reti) {
-				    fprintf(stderr, "Could not compile regex\n");
-				    exit(1);
+				if (received > 0){
+					parse_response(buf);
 				}
-
-				/* Execute regular expression to extract matches */
-				reti = regexec(&regex, buf, 3, pmatch, 0);
-				if (!reti) {
-					int nicklen = pmatch[1].rm_eo - pmatch[1].rm_so;
-					char * nick = (char*) calloc(nicklen,1);
-					memcpy(nick, buf + pmatch[1].rm_so, nicklen);
-
-					int contentlen = (pmatch[2].rm_eo - pmatch[2].rm_so)-1;
-					char * content = (char*) calloc(contentlen,1);
-					memcpy(content, buf + pmatch[2].rm_so, contentlen);
-
-					fprintf(stderr, "%s: %s\n", nick, content);
-					free(nick);
-					free(content);
-
-				}
-				else if (reti != REG_NOMATCH) {
-				    regerror(reti, &regex, msgbuf, sizeof(msgbuf));
-				    fprintf(stderr, "Regex match failed: %s\n", msgbuf);
-				    exit(1);
-				}
-
-				regfree(&regex);
-
-                fprintf(stderr, "%s", buf);
                 free(buf);
             }
         }
