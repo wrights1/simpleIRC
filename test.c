@@ -81,69 +81,78 @@ void parse_response(char* buf){
 	takes raw server response and prints user-friendly things to the terminal
 
 	*/
-		regex_t regex;
-		int reti;
-		int privmsg = 0;
-		int part = 0;
-		int join = 0;
-		regmatch_t pmatch[4];
+		int pmret;
+		int cmdflag = 0;
 
-		/* Compile regular expression to capture username and message content  */
-		reti = regcomp(&regex, "^:(.*)!.* ([a-zA-Z]*) .*:(.*)$", REG_ICASE|REG_EXTENDED);
-		// if (reti) {
-		// 	fprintf(stderr, "Could not compile regex\n");
-		// 	exit(1);
-		// }
+		int i = 0;
+		for ( i ; i < 3; i++){
+			regex_t pm_regex;
+			regmatch_t pm_match[4];
 
-		/* Execute regular expression to extract matches */
+			char *expressions[3] = { "^:(.*)!.* ([a-zA-Z]*) #[a-zA-Z0-9]* :(.*)$",  "^:(.*)!.* ([a-zA-Z]*) #(.*)$", "^:(.*)!.* ([a-zA-Z]*) :(.*)$" };
 
-		reti = regexec(&regex, buf, 4, pmatch, 0);
-		if (!reti) {
-			int cmdlen = pmatch[2].rm_eo - pmatch[2].rm_so;
-			char * cmd = (char*) calloc(cmdlen,1);
-			memcpy(cmd, buf + pmatch[2].rm_so, cmdlen);
-			//fprintf(stderr, "cmd = %s\n", cmd);
-
-			if (strcmp("PART", cmd) == 0 )
-				part = 1;
-			if (strcmp("PRIVMSG", cmd) == 0 )
-				privmsg = 1;
-			if (strcmp("JOIN", cmd) == 0)
-				join = 1;
-
-			int nicklen = pmatch[1].rm_eo - pmatch[1].rm_so;
-			char * nick = (char*) calloc(nicklen,1);
-			memcpy(nick, buf + pmatch[1].rm_so, nicklen);
-
-			int contentlen = (pmatch[3].rm_eo - pmatch[3].rm_so)-1;
-			char * content = (char*) calloc(contentlen,1);
-			memcpy(content, buf + pmatch[3].rm_so, contentlen);
-
-			if (part){
-				fprintf(stderr, " ~~~~ %s left the channel. ~~~~\n", nick);
-			}
-			if (privmsg) {
-				fprintf(stderr, "%s: %s\n", nick, content);
-			}
-			if (join) {
-				fprintf(stderr, "~~~~ %s has joined the channel. ~~~~\n", nick);
+			/* Compile regular expression to capture nickname, command, and message content  */
+			pmret = regcomp(&pm_regex, expressions[i], REG_ICASE|REG_EXTENDED);
+			if (pmret) {
+				fprintf(stderr, "Could not compile regex\n");
+				exit(1);
 			}
 
-			free(nick);
-			free(content);
-			free(cmd);
+			/* Execute regular expression to extract matches */
+			pmret = regexec(&pm_regex, buf, 4, pm_match, 0);
+			if (!pmret) {
+				int cmdlen = pm_match[2].rm_eo - pm_match[2].rm_so;
+				char * cmd = (char*) calloc(cmdlen,1);
+				memcpy(cmd, buf + pm_match[2].rm_so, cmdlen);
+				//fprintf(stderr, "cmd = %s\n", cmd);
+
+				int nicklen = pm_match[1].rm_eo - pm_match[1].rm_so;
+				char * nick = (char*) calloc(nicklen,1);
+				memcpy(nick, buf + pm_match[1].rm_so, nicklen);
+
+				int contentlen = (pm_match[3].rm_eo - pm_match[3].rm_so)-1;
+				char * content = (char*) calloc(contentlen,1);
+				memcpy(content, buf + pm_match[3].rm_so, contentlen);
+
+				if (strcmp("PRIVMSG", cmd) == 0 ){
+					fprintf(stderr, "%s: %s\n", nick, content);
+					cmdflag = 1;
+					break;
+				}
+				if (strcmp("PART", cmd) == 0 ) {
+					fprintf(stderr, "~~~~~~~~ %s left the channel ~~~~~~~~\n", nick);
+					cmdflag = 1;
+					break;
+				}
+				if (strcmp("JOIN", cmd) == 0){
+					fprintf(stderr, "~~~~~~~~ %s has joined the channel ~~~~~~~~\n", nick);
+					cmdflag = 1;
+					break;
+				}
+				if (strcmp("NICK", cmd) == 0 ){
+					//fprintf(stderr, "nick = %s\n", nick );
+					//fprintf(stderr, "content = %s\n", content);
+					fprintf(stderr,  "%s is now known as: %s\n", nick, content);
+					cmdflag = 1;
+					break;
+				}
+
+				free(nick);
+				free(content);
+				free(cmd);
+			}
+
+			else if (pmret != REG_NOMATCH) {
+				fprintf(stderr, "Regex match failed\n");
+				exit(1);
+			}
+
+			regfree(&pm_regex);
 		}
 
-		else if (reti != REG_NOMATCH) {
-			fprintf(stderr, "Regex match failed\n");
-			exit(1);
-		}
-
-		if (!privmsg && !part && !join){
+		if (!cmdflag){
 			fprintf(stderr, "%s", buf);
 		}
-
-		regfree(&regex);
 }
 
 int chat(int socket){
@@ -179,7 +188,6 @@ int chat(int socket){
 
         fd_set readfds;
 		char* channel = NULL;
-
         while (1){
             FD_ZERO(&readfds);
             FD_SET(STDIN, &readfds);
@@ -208,17 +216,22 @@ int chat(int socket){
 					if (command != NULL){
 						command = command + sizeof(char); //remove  "/"
 						if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
-							char channel_line[256];
-							strcpy(channel_line, str);
-							channel = strtok(channel_line,"#");
-							channel = strtok(NULL,"#"); // only update channel var on join command
-							if ( channel != NULL) {
-								channel[strlen(channel)-1] = 0; // remove newline
-								//fprintf(stderr, "channel = %s\n", channel);
+							if (channel != NULL ){
+								fprintf(stderr, "You are already in %s. You must leave this channel to join another one.\n", channel );
 							}
-							str = str + sizeof(char); // remove leading "/"
-							sendall(socket, str, strlen(str));
-							fprintf(stderr, " ======================== JOINED CHANNEL %s ======================= \n", channel );
+							else {
+								char channel_line[256];
+								strcpy(channel_line, str);
+								channel = strtok(channel_line,"#");
+								channel = strtok(NULL,"#"); // only update channel var on join command
+								if ( channel != NULL) {
+									channel[strlen(channel)-1] = 0; // remove newline
+									//fprintf(stderr, "channel = %s\n", channel);
+								}
+								str = str + sizeof(char); // remove leading "/"
+								sendall(socket, str, strlen(str));
+								fprintf(stderr, " ============================== JOINED CHANNEL %s ============================== \n", channel );
+							}
 						}
 						else if ( channel != NULL && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
 							int partlen = strlen(channel)+8;
@@ -227,7 +240,7 @@ int chat(int socket){
 							part[partlen-2] = 13; // 13 = 0x0D = \r
 							part[partlen-1] = 10; // 10 = =x0A = \n
 							sendall(socket, part, partlen);
-							fprintf(stderr, " ======================== CLOSED CHANNEL %s ======================= \n", channel );
+							fprintf(stderr, " ============================== CLOSED CHANNEL %s ============================== \n", channel );
 							/*
 								TODO????
 								keep track of previous channels so you can join channels from other channels (or maybe just don't allow JOIN at all if already in a channel)
