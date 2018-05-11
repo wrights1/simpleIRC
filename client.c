@@ -1,8 +1,11 @@
 /*
-	Quan Tran
-	Steven Wright
+    ~~~~~ simpleIRC ~~~~~
+    Steven Wright and Quan Tran
+    May 15, 2018
+    client.c
+        IRC client to connect to server, register with,
+        and chat in
 
-    15 May 2018
 */
 #include <string.h>
 #include <ctype.h>
@@ -25,10 +28,10 @@
 struct global_state {
 	char *nickname;
 	int nickname_registered;
+	char* channel;
 };
 typedef struct global_state global_state_t;
 
-int sendall(int s, char *buf, int len){
 /*
 	A function that sends the entire buf string if the socket is open
 
@@ -39,6 +42,7 @@ int sendall(int s, char *buf, int len){
     Return:
         - A -1 if a failure and a 0 on success
 */
+int sendall(int s, char *buf, int len){
 	int total = 0; // how many bytes we've spent
 	int bytesleft = len; // how many we have left to send
 	int n;
@@ -96,10 +100,19 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			char *answer = (char*) calloc(asize,1);
 			getline(&answer, &asize,stdin);
 			answer[strlen(answer)-1] = 0;
+			while (strcmp(answer,"1") != 0 && strcmp(answer,"2") != 0 ) {
+				fprintf(stderr, "[Enter 1 or 2]: ");
+				getline(&answer, &asize,stdin);
+				answer[strlen(answer)-1] = 0;
+			}
 			if (strcmp(answer,"1")==0){
-				fprintf(stderr, "password: ");
+				fprintf(stderr, "[simpleIRC] Password: ");
 				char *password= (char*) calloc(asize,1);
 				getline(&password, &asize,stdin);
+				while (strlen(password) < 6) {
+					fprintf(stderr, "[simpleIRC] Passwords can't be less than 6 characters. Password: ");
+					getline(&password, &asize,stdin);
+				}
 				password[strlen(password)-1] = 0;
 
 				char *loginFmt = "LOGIN %s %s\r\n";
@@ -107,13 +120,13 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				sprintf(loginCmd, loginFmt, state->nickname, password);
 				sendall(socket, loginCmd, strlen(loginCmd));
 			} else if (strcmp(answer, "2") == 0) {
-				fprintf(stderr, "Choose a nickname: " );
+				fprintf(stderr, "[simpleIRC] Choose a nickname: ");
 				size_t nickSize = 255;
 				getline(&state->nickname,&nickSize,stdin);
 
 				state->nickname[strlen(state->nickname) - 1] = 0;
 				if (strlen(state->nickname) == 0) {
-					free(state->nickname);
+					//free(state->nickname);
 					state->nickname = getlogin();
 				}
 
@@ -127,13 +140,21 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		else if (strcmp(buf,"NOT REGISTERED") == 0 ){
 			size_t asize = 1024;
 			char *password = (char *) calloc(asize, 1);
-			fprintf(stderr, "Password: ");
+			fprintf(stderr, "You must register this nickname. Choose a password: ");
 			getline(&password, &asize, stdin);
+			while (strlen(password) < 6 ){
+				fprintf(stderr, "[simpleIRC] Your password can't be less than 6 characters. Choose a better password: ");
+				getline(&password, &asize, stdin);
+			}
 			password[strlen(password) - 1] = 0;
 
 			char *email = (char *) calloc(asize, 1);
-			fprintf(stderr, "Email address: ");
+			fprintf(stderr, "[simpleIRC] Enter your email address: ");
 			getline(&email, &asize, stdin);
+			while (strcmp(email,"\n") == 0 ) {
+				fprintf(stderr, "[simpleIRC] Enter a valid email address: ");
+				getline(&email, &asize, stdin);
+			}
 			email[strlen(email) - 1] = 0;
 
 			char *registerCmd = calloc(1024, sizeof(char));
@@ -147,6 +168,10 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			char *token = (char *) calloc(256, 1);
 			size_t n = 256;
 			getline(&token, &n, stdin);
+			while (strlen(token) < 2){
+				fprintf(stderr, "[simpleIRC] Invalid token. Try again: ");
+				getline(&token, &n, stdin);
+			}
 			token[strlen(token) - 1] = 0;
 
 			char *tokenCmd = calloc(n, sizeof(char));
@@ -156,13 +181,34 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			return;
 		}
 		else if (strcmp(buf,"RIGHT TOKEN")==0){
-			fprintf(stderr, "Nickname registered.\n" );
+			fprintf(stderr, "Nickname registered.\n");
 			state->nickname_registered = 1;
+			return;
+		}
+		else if (strcmp(buf,"RIGHT PASSWORD")==0){
+			fprintf(stderr, "Logged in successfully as %s.\n" ,state->nickname);
+			return;
+		}
+		else if(strcmp(buf,"WRONG PASSWORD")==0){
+			size_t asize = 1024;
+			fprintf(stderr, "Password: ");
+			char *password = (char *) calloc(asize, 1);
+			getline(&password, &asize,stdin);
+			while (strlen(password) < 6) {
+				fprintf(stderr, "Passwords can't be less than 6 characters. Password: ");
+				getline(&password, &asize,stdin);
+			}
+			password[strlen(password)-1] = 0;
+
+			char *loginFmt = "LOGIN %s %s\r\n";
+			char *loginCmd = calloc(1024, sizeof(char));
+			sprintf(loginCmd, loginFmt, state->nickname, password);
+			sendall(socket, loginCmd, strlen(loginCmd));
 			return;
 		}
 		else if (strcmp(buf,"USER LOGGED IN") == 0) {
 			fprintf(stderr, "User already logged in.\n");
-			fprintf(stderr, "Choose a nickname: " );
+			fprintf(stderr, "[simpleIRC] Choose a different nickname: ");
 			size_t nickSize = 255;
 			getline(&state->nickname,&nickSize,stdin);
 
@@ -182,11 +228,13 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		int pmret;
 		int cmdflag = 0;
 		int i;
-		char *expressions[3] = { "^:(.*)!.* ([a-zA-Z]*) #[a-zA-Z0-9]* :(.*)$",  "^:(.*)!.* ([a-zA-Z]*) #(.*)$", "^:(.*)!.* ([a-zA-Z]*) :(.*)$" };
+		char *expressions[3] = { "^:(.*)!.* ([a-zA-Z]*) (#?[a-zA-Z0-9]*) :(.*)$",
+		 "^:(.*)!.* ([a-zA-Z]*) #(.*)$",
+		 "^:(.*)!.* ([a-zA-Z]*) :(.*)$" };
 
 		for ( i = 0 ; i < 3; i++){
 			regex_t pm_regex;
-			regmatch_t pm_match[4];
+			regmatch_t pm_match[5];
 
 			/* Compile regular expression to capture nickname, command, and message content  */
 			pmret = regcomp(&pm_regex, expressions[i], REG_ICASE|REG_EXTENDED);
@@ -195,9 +243,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				exit(1);
 			}
 
-
 			/* Execute regular expression to extract matches */
-			pmret = regexec(&pm_regex, buf, 4, pm_match, 0);
+			pmret = regexec(&pm_regex, buf, 5, pm_match, 0);
 			if (!pmret) {
 				int cmdlen = pm_match[2].rm_eo - pm_match[2].rm_so;
 				char * cmd = (char*) calloc(cmdlen,1);
@@ -208,9 +255,31 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				char * nick = (char*) calloc(nicklen,1);
 				memcpy(nick, buf + pm_match[1].rm_so, nicklen);
 
-				int contentlen = (pm_match[3].rm_eo - pm_match[3].rm_so)-1;
-				char * content = (char*) calloc(contentlen,1);
-				memcpy(content, buf + pm_match[3].rm_so, contentlen);
+				int contentlen;
+				char * content;
+				int recipientlen;
+				char *recipient;
+				if (i == 0){
+					recipientlen = (pm_match[3].rm_eo - pm_match[3].rm_so);
+					recipient = (char*) calloc(recipientlen,1);
+					memcpy(recipient, buf + pm_match[3].rm_so, recipientlen);
+
+					contentlen = (pm_match[4].rm_eo - pm_match[4].rm_so)-1;
+					content = (char*) calloc(contentlen,1);
+					memcpy(content, buf + pm_match[4].rm_so, contentlen);
+
+
+					if (strcmp(recipient,state->nickname) == 0){
+						fprintf(stderr, "Private message from %s. Only you can see this message.\n", recipient);
+					}
+				}
+				else {
+					contentlen = (pm_match[3].rm_eo - pm_match[3].rm_so)-1;
+					content = (char*) calloc(contentlen,1);
+					memcpy(content, buf + pm_match[3].rm_so, contentlen);
+				}
+
+
 
 				if (strcmp("PRIVMSG", cmd) == 0 ){
 					fprintf(stderr, "%s: %s\n", nick, content);
@@ -285,8 +354,9 @@ int chat(int socket){
 		global_state_t *state = (global_state_t *) calloc(sizeof(global_state_t), 1);
 		state->nickname = (char *) calloc(sizeof(char), 1024);
 		state->nickname_registered = 0;
+		state->channel = "simpleIRC";
 
-		fprintf(stderr, "Choose a nickname: " );
+		fprintf(stderr, "[simpleIRC] Choose a nickname: ");
 		size_t nickSize = 255;
 		getline(&state->nickname,&nickSize,stdin);
 
@@ -407,17 +477,6 @@ int chat(int socket){
         return 0;
 }
 
-
-// get sockaddr, IPv4 or IPv6:
-void *get_in_addr(struct sockaddr *sa)
-{
-	if (sa->sa_family == AF_INET) {
-		return &(((struct sockaddr_in*)sa)->sin_addr);
-	}
-
-	return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
-
 int main(int argc, char **argv)
 {
 	int sockfd, numbytes;
@@ -442,6 +501,7 @@ int main(int argc, char **argv)
 	if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
 		perror("client: connect");
 		close(sockfd);
+		exit(1);
 	}
 
 	if (p == NULL) {

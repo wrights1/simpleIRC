@@ -1,5 +1,11 @@
 /*
-** selectserver.c -- a cheezy multiperson chat server
+    ~~~~~ simpleIRC ~~~~~
+    Steven Wright and Quan Tran
+    May 15, 2018
+    server.c
+        IRC server for clients to connect to, register with,
+        and chat in
+
 */
 
 #include <stdio.h>
@@ -42,17 +48,6 @@ struct server_state{
 
 };
 
-// get sockaddr, IPv4 or IPv6:
-void *get_in_addr(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return &(((struct sockaddr_in*)sa)->sin_addr);
-    }
-
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
-
-int sendall(int s, char *buf, int len){
 /*
 	A function that sends the entire buf string if the socket is open
 
@@ -63,6 +58,8 @@ int sendall(int s, char *buf, int len){
     Return:
         - A -1 if a failure and a 0 on success
 */
+int sendall(int s, char *buf, int len){
+
 	int total = 0; // how many bytes we've spent
 	int bytesleft = len; // how many we have left to send
 	int n;
@@ -108,6 +105,17 @@ user_t *add_user(user_t *users, user_t *user_to_add) {
     return user_to_add;
 }
 
+channel_t *add_channel(channel_t *channels,  channel_t *channel_to_add) {
+    if (channels == NULL) {
+        return channel_to_add;
+    }
+
+    channels->prev = channel_to_add;
+    channel_to_add->next = channels;
+
+    return channel_to_add;
+}
+
 int send_email(int token, char *email, char * nick){
     int sockfd, numbytes;
 	char buf[100];
@@ -145,7 +153,7 @@ int send_email(int token, char *email, char * nick){
     char * emailFmt = "HELO cs375\nMAIL FROM: server@simpleIRC.com\n"
                    "RCPT TO: %s\nDATA\nFrom: server@simpleIRC.com\nTo: %s\n"
                    "Subject: simpleIRC Verification Code\n"
-                   "Here is your cerification code for registering the nickname \"%s\" on the simpleIRC server: %d\r\n."
+                   "Here is your cerification code for registering the nickname \"%s\" on the simpleIRC server: %d.\r\n"
                    "Enter this where prompted in your terminal, then hit enter."
                    "\n.\n";
 
@@ -154,6 +162,18 @@ int send_email(int token, char *email, char * nick){
     free(emailCmd);
     close(sockfd);
 
+}
+
+user_t* get_user_from_socket(user_t* users, int socket){
+    user_t* head = users;
+    while (head != NULL){
+        if (head->socket == socket){
+            return head;
+        }
+        else
+            head = head->next;
+    }
+    return NULL;
 }
 
 void handle_data(char * buf, int socket, struct server_state *state){
@@ -167,11 +187,11 @@ void handle_data(char * buf, int socket, struct server_state *state){
 
         while ( user != NULL){
             if (strcmp(parameter,user->nick) == 0 && user->socket == -1){
-                sendall(socket, "REGISTERED", 11); //nick taken, expecting password
+                sendall(socket, "REGISTERED", 11); //nick taken but not logged in, expecting password
                 break;
             }
             else if (strcmp(parameter,user->nick) == 0 && user->socket != -1) {
-                sendall(socket, "USER LOGGED IN", 15);
+                sendall(socket, "USER LOGGED IN", 15); //nick taken and currently logged in, pick new name
                 break;
             }
             else {
@@ -200,9 +220,10 @@ void handle_data(char * buf, int socket, struct server_state *state){
         strncpy(new_user->password, password, n);
 
         int token = rand() % 9000000 + 1000000;
+        token = 0;
         new_user->token = token;
 
-        send_email(token,email,nick);
+        //send_email(token,email,nick);
 
         if (state->pending_users == NULL) {
             state->pending_users = new_user;
@@ -237,6 +258,27 @@ void handle_data(char * buf, int socket, struct server_state *state){
                 pending_user = pending_user->next;
             }
         }
+    } else if (strcmp(command, "LOGIN") == 0) {
+        char *nick = strtok(parameter, " ");
+        char *pass = strtok(NULL, " ");
+        user_t *user = state->users;
+        while (user != NULL) {
+            if (strcmp(user->nick, nick) == 0) {
+                if (strcmp(user->password, pass) == 0) {
+                    char *rightPass = "RIGHT PASSWORD";
+                    user->socket = socket;
+                    sendall(socket, rightPass, strlen(rightPass));
+                }
+                else {
+                    char *wrongPass = "WRONG PASSWORD";
+                    sendall(socket, wrongPass, strlen(wrongPass));
+                }
+                break;
+            }
+            else {
+                user = user->next;
+            }
+        }
     } else if (strcmp(command, "QUIT") == 0) {
         // user_t *user = state->users;
         //
@@ -252,9 +294,108 @@ void handle_data(char * buf, int socket, struct server_state *state){
         //
         // close()
     }
-    // if (strcmp(command,"JOIN") == 0){
-    //
-    // }
+    else if (strcmp(command,"JOIN") == 0){
+        user_t *user = state->users; // find user that sent JOIN command
+        while (user != NULL) {
+            if (user->socket == socket) {
+                break;
+            }
+            else
+                user = user->next;
+        }
+        char *channelName = strtok(parameter, "\r\n");
+        //fprintf(stderr, "channelName = %s\n", channelName);
+        char *joinFmt = ":%s!%s JOIN %s\r\n";
+        char *joinCmd = calloc(1024, sizeof(char));
+        sprintf(joinCmd, joinFmt, user->nick, user->email, channelName);
+
+        channel_t *channel_head = state->channels; // check if channel exists already
+        while (channel_head != NULL){
+            if (strcmp(channel_head->name,channelName) == 0 ){
+                user_t* new_channel_users = add_user(channel_head->users, user);
+                channel_head->users = new_channel_users;
+                // send JOIN message to everyone in channel
+                while (new_channel_users != NULL){
+                    sendall(new_channel_users->socket, joinCmd, strlen(joinCmd));
+                    new_channel_users = new_channel_users->next;
+                }
+                break; // found existing channel, added user to it
+            }
+            else
+                channel_head = channel_head->next;
+        }
+        // didn't find channel, create one and add user to it
+        if (channel_head == NULL) {
+            channel_t *channel = calloc(sizeof(channel_t),1);
+            channel->name = calloc(strlen(channelName),1);
+            strcpy(channel->name, channelName);
+            channel->prev = NULL;
+            state->channels = add_channel(state->channels, channel);
+            fprintf(stderr, "channel->name = %s\n", channel->name );
+            user_t* new_channel_users = add_user(channel->users, user);
+            channel->users = new_channel_users;
+
+            // send JOIN message to everyone in channel
+            while (new_channel_users != NULL){
+                sendall(new_channel_users->socket, joinCmd, strlen(joinCmd));
+                new_channel_users = new_channel_users->next;
+            }
+        }
+    }
+    else if (strcmp(command,"PRIVMSG") == 0){
+        char *channelName = strtok(parameter, " ");
+        char *content = strtok(NULL, " :");
+        fprintf(stderr, "channelName = %s\n", channelName);
+        fprintf(stderr, "content = %s\n", content);
+
+        char *privmsgFmt = ":%s!%s PRIVMSG %s :%s\r\n";
+        char *privmsgCmd = calloc(1024, sizeof(char));
+
+        channel_t *channel = state->channels;
+        user_t *sender = get_user_from_socket(channel->users,socket);
+        while (channel != NULL){
+            fprintf(stderr, "channel->name = %s\n", channel->name);
+            if (strcmp(channel->name, channelName) == 0){
+                user_t *user = channel->users;
+                while (user != NULL){
+                    if (user != sender){
+                        sprintf(privmsgCmd, privmsgFmt, sender->nick, sender->email, channelName, content);
+                        sendall(user->socket, privmsgCmd, strlen(privmsgCmd));
+                    }
+                    user = user->next;
+                }
+                break;
+            }
+            else{
+                channel = channel->next;
+            }
+        }
+        user_t* user = state->users;
+        // no matching channels, checking nicknames
+        while (user != NULL){
+            if (strcmp(user->nick,channelName)==0){
+                if(user->socket != -1){
+                    sprintf(privmsgCmd, privmsgFmt, sender->nick, sender->email, channelName, content);
+                    sendall(user->socket, privmsgCmd, strlen(privmsgCmd));
+                }
+                break;
+            }
+            user = user->next;
+        }
+    }
+    else if (strcmp(command,"PART") == 0){
+        // char *channelName = strtok(parameter, " ");
+        //
+        // channel_t *channel = state->channels;
+        // user_t *sender = get_user_from_socket(channel->users,socket);
+        // while (channel != NULL){
+        //     if (strcmp(channel->name, channelName) == 0){
+        //         channel->users = remove_user(channel->users, )
+        //     }
+        //     else{
+        //         channel = channel->next;
+        //     }
+    }
 }
 
 int main(void)
@@ -365,8 +506,15 @@ int main(void)
                     if ((nbytes = recv(i, buf, sizeof buf, 0)) <= 0) {
                         // got error or connection closed by client
                         if (nbytes == 0) {
-                            // connection closed
+                            // connection closed, find user that was using that socket and make it -1 (avail)
                             printf("selectserver: socket %d hung up\n", i);
+                            user_t *head = state->users;
+                            while (head != NULL){
+                                if (head->socket == i)
+                                    head->socket = -1;
+                                else
+                                    head = head->next;
+                            }
                         } else {
                             perror("recv");
                         }
