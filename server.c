@@ -73,6 +73,14 @@ int sendall(int s, char *buf, int len){
     return n == -1?-1:0; // return -1 on failure, 0 on success
 }
 
+/*
+    creates and sends an email to the specified email address through
+    denison's mail server.
+    cantains a randomly generated acccess token which is used to
+    verify the email
+
+    only returns nonzero on failure to connect to mail server
+*/
 int send_email(int token, char *email, char * nick){
     int sockfd, numbytes;
 	char buf[100];
@@ -121,6 +129,11 @@ int send_email(int token, char *email, char * nick){
 
 }
 
+/*
+    given a list of users and a socket descriptor,
+    returns the node containing the user struct that is associated with
+    that socket
+*/
 ll_node_t* get_user_from_socket(linked_list_t* users, int socket){
     ll_node_t *node = users->head;
     while (node != NULL){
@@ -134,6 +147,10 @@ ll_node_t* get_user_from_socket(linked_list_t* users, int socket){
     return NULL;
 }
 
+/*
+    given a list of users and a nickname, returns the
+    node containing the specified user
+*/
 ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
     ll_node_t *node = users->head;
     while (node != NULL) {
@@ -148,6 +165,11 @@ ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
     return NULL;
 }
 
+/*
+    given a list of channels and the name of a channel,
+    returns the node containing the specified channel
+
+*/
 ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
     ll_node_t *node = channels->head;
     while (node != NULL) {
@@ -161,6 +183,13 @@ ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
     return NULL;
 }
 
+/*
+    parses client messages and respondes accordingly to each one.
+
+    if client sends message that is not accounted for here, no response
+    will be generated
+    TODO unknown command case?
+*/
 void handle_data(char * buf, int socket, struct server_state *state){
     char line[512];
     strcpy(line, buf);  // copy of str to be tokenized
@@ -357,6 +386,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
     }
     else if (strcmp(command,"PART") == 0){
         //remove user from channel and send PART message to rest of channel
+        // TODO if user is last to leave chnnel, delete the channel
         char *channelName = strtok(parameter, " ");
         ll_node_t *channel_node = get_channel(state->channels, channelName);
 
@@ -387,6 +417,8 @@ void handle_data(char * buf, int socket, struct server_state *state){
     // else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
     //
     // }
+
+    // TODO make default case to prompt "unknown command" in client
 }
 
 int main(void)
@@ -419,7 +451,6 @@ int main(void)
     state->users = calloc(sizeof(linked_list_t), 1);
     state->pending_users = calloc(sizeof(linked_list_t), 1);
     state->channels = calloc(sizeof(linked_list_t), 1);
-
 
     // get us a socket and bind it
     memset(&hints, 0, sizeof hints);
