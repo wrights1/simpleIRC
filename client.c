@@ -191,7 +191,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		}
 		else if(strcmp(buf,"WRONG PASSWORD")==0){
 			size_t asize = 1024;
-			fprintf(stderr, "Password: ");
+			fprintf(stderr, "Incorrect. Password: ");
 			char *password = (char *) calloc(asize, 1);
 			getline(&password, &asize,stdin);
 			while (strlen(password) < 6) {

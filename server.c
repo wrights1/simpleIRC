@@ -167,7 +167,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
     char * command = NULL;
     command = strtok(line," ");
     char * parameter = strtok(NULL,"\r\n");
-    if (strcmp(command,"NICK") == 0){
+    if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
         ll_node_t *found_node = get_user_from_nick(state->users, parameter);
         if (found_node != NULL) {
             user_t *user = (user_t *) found_node->object;
@@ -231,7 +231,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
         char *pass = strtok(NULL, " ");
         ll_node_t *user_node = get_user_from_nick(state->users, nick);
 
-        if (user_node == NULL) {
+        if (user_node != NULL) {
             user_t *user = (user_t *) user_node->object;
             if (strcmp(user->password, pass) == 0) {
                 char *rightPass = "RIGHT PASSWORD";
@@ -243,22 +243,30 @@ void handle_data(char * buf, int socket, struct server_state *state){
                 sendall(socket, wrongPass, strlen(wrongPass));
             }
         }
-    } else if (strcmp(command, "QUIT") == 0) {
-        // user_t *user = state->users;
-        //
-        // while ( user != NULL){
-        //     if (socket == user->socket){
-        //         user->socket = -1;
-        //         break;
-        //     }
-        //     else {
-        //         user = user->next;
-        //     }
-        // }
-        //
-        // close()
+    } else if (strcmp(command, "QUIT") == 0 || strcmp(command, "quit") == 0) {
+        // remove QUITting user from all channels they are in and set their socket to -1
+        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+        ll_node_t *channel_node = state->channels->head;
+        while (channel_node != NULL && sender_node != NULL){
+            user_t *sender = (user_t *) sender_node->object;
+            channel_t *channel = (channel_t *) channel_node;
+            ll_node_t *channel_user_node = channel->users->head;
+            while (channel_user_node != NULL){
+                user_t *channel_user = (user_t *) channel_user_node->object;
+                if (strcmp(channel_user->nick,sender->nick)==0){
+                    ll_remove(channel->users, sender_node); // remove sender of PART from channel
+                    break;
+                }
+                channel_user_node = channel_user_node->next;
+            }
+            channel_node = channel_node->next;
+        }
+        if (sender_node != NULL){
+            user_t *sender = (user_t *) sender_node->object;
+            sender->socket = -1;
+        }
     }
-    else if (strcmp(command,"JOIN") == 0){
+    else if (strcmp(command,"JOIN") == 0 || strcmp(command,"join") == 0){
         ll_node_t *sender_node = get_user_from_socket(state->users, socket);
         user_t *sender = NULL;
         if (sender_node != NULL) {
@@ -281,7 +289,13 @@ void handle_data(char * buf, int socket, struct server_state *state){
             ll_node_t *channel_user_node = channel->users->head;
             while (channel_user_node != NULL) {
                 user_t *channel_user = (user_t *) channel_user_node->object;
-                sendall(channel_user->socket, joinCmd, strlen(joinCmd));
+                // don't send join message to sender
+                if (strcmp(channel_user->nick, sender->nick) != 0 ) {
+                    sendall(channel_user->socket, joinCmd, strlen(joinCmd));
+                }
+                // else{
+                //     // TODO TODO TODO send the JOINing user the names of everyone currently in channel
+                // }
                 channel_user_node = channel_user_node->next;
             }
         }
@@ -295,15 +309,9 @@ void handle_data(char * buf, int socket, struct server_state *state){
             ll_add(state->channels, channel);
             ll_add(channel->users, sender);
             fprintf(stderr, "channel->name = %s\n", channel->name );
-
-            // send JOIN message to everyone in channel
-            // while (new_channel_users != NULL){
-            //     sendall(new_channel_users->socket, joinCmd, strlen(joinCmd));
-            //     new_channel_users = new_channel_users->next;
-            // }
         }
     }
-    else if (strcmp(command,"PRIVMSG") == 0){
+    else if (strcmp(command,"PRIVMSG") == 0 || strcmp(command,"privmsg") == 0){
         char *channelName = strtok(parameter, " ");
         char *content = strtok(NULL, "");
         content += 1;
@@ -348,18 +356,37 @@ void handle_data(char * buf, int socket, struct server_state *state){
         }
     }
     else if (strcmp(command,"PART") == 0){
-        // char *channelName = strtok(parameter, " ");
-        //
-        // channel_t *channel = state->channels;
-        // user_t *sender = get_user_from_socket(channel->users,socket);
-        // while (channel != NULL){
-        //     if (strcmp(channel->name, channelName) == 0){
-        //         channel->users = remove_user(channel->users, )
-        //     }
-        //     else{
-        //         channel = channel->next;
-        //     }
+        //remove user from channel and send PART message to rest of channel
+        char *channelName = strtok(parameter, " ");
+        ll_node_t *channel_node = get_channel(state->channels, channelName);
+
+        if (channel_node != NULL){
+            channel_t *channel = (channel_t *) channel_node->object;
+            ll_node_t *sender_node = get_user_from_socket(channel->users, socket);
+            if (sender_node != NULL){
+                user_t* sender = (user_t *) sender_node->object;
+                ll_remove(channel->users, sender_node); // remove sender of PART from channel
+
+                char *partFmt = ":%s!%s PART %s\r\n";
+                char *partCmd = calloc(1024, sizeof(char));
+                ll_node_t* channel_user = channel->users->head;
+                while (channel_user != NULL) { // send PART message to rest of channel
+                    user_t *user = (user_t *) channel_user->object;
+                    sprintf(partCmd, partFmt, sender->nick, sender->email, channelName);
+                    sendall(user->socket, partCmd, strlen(partCmd));
+                    channel_user = channel_user->next;
+                }
+            }
+        }
     }
+    // // TODO implement /names and /channels to list names of ppl in channel
+    // // and list all channels on server
+    // else if (strcmp(command,"NAMES") == 0 || strcmp(command,"names") == 0){
+    //
+    // }
+    // else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
+    //
+    // }
 }
 
 int main(void)
@@ -493,17 +520,6 @@ int main(void)
                     } else {
                         // we got some data from a client
                         handle_data(buf, i, state);
-                        // for(j = 0; j <= fdmax; j++) {
-                        //     // send to everyone!
-                        //     if (FD_ISSET(j, &master)) {
-                        //         // except the listener and ourselves
-                        //         if (j != listener && j != i) {
-                        //             if (send(j, buf, nbytes, 0) == -1) {
-                        //                 perror("send");
-                        //             }
-                        //         }
-                        //     }
-                        // }
                     }
                 } // END handle data from client
             } // END got new incoming connection
