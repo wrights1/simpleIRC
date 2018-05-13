@@ -155,6 +155,8 @@ ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
     ll_node_t *node = users->head;
     while (node != NULL) {
         user_t *user = (user_t *) node->object;
+        fprintf(stderr, "user->nick = %s, nick = %s, %lu %lu\n",user->nick, nick, strlen(user->nick), strlen(nick));
+        fprintf(stderr, "nick = %s\n", nick);
         if (strcmp(user->nick, nick) == 0) {
             return node;
         }
@@ -168,6 +170,7 @@ ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
 /*
     given a list of channels and the name of a channel,
     returns the node containing the specified channel
+    returns NULL if not found
 
 */
 ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
@@ -179,8 +182,47 @@ ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
         }
         node = node->next;
     }
-
     return NULL;
+}
+
+void strip_newline(char *buf) {
+    int i = strlen(buf) - 1;
+    while (i >= 0) {
+        if (buf[i] == '\n' || buf[i] == '\r' || buf[i] == ' ') {
+            buf[i] = '\0';
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+}
+
+char *recv_all(int socket) {
+    int n = 1024;
+    int len = 0;
+    char *buf = calloc(sizeof(char), n);
+
+    while (1) {
+        char c[1];
+        int nbytes = recv(socket, c, 1, 0);
+        if (nbytes == 0) {
+            break;
+        }
+
+        buf[len] = c[0];
+        len += 1;
+        if (c[0] == '\n') {
+            break;
+        }
+
+        if (len == n - 2) {
+            n *= 2;
+            buf = realloc(buf, n);
+        }
+    }
+    buf[len] = 0;
+
+    return buf;
 }
 
 /*
@@ -188,15 +230,62 @@ ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
 
     if client sends message that is not accounted for here, no response
     will be generated
-    TODO unknown command case?
+    sends unknown command if command received is not valid
 */
 void handle_data(char * buf, int socket, struct server_state *state){
-    char line[512];
+    fprintf(stderr, "old buf = %s\n", buf);
+    strip_newline(buf);
+
+    if (strlen(buf) == 0) {
+        return;
+    }
+
+    fprintf(stderr, "buf = %s\n", buf);
+    char *line = calloc(strlen(buf)+1,1);
     strcpy(line, buf);  // copy of str to be tokenized
     char * command = NULL;
     command = strtok(line," ");
-    char * parameter = strtok(NULL,"\r\n");
+    fprintf(stderr, "command: %s\n", command);
+    //memset(line,0,strlen(line));
+    //strcpy(line, buf);
+    char * parameter = strtok(NULL, "");
+    if (parameter != NULL)
+        fprintf(stderr, "parameter ---- %s --- %lu\n", parameter, strlen(parameter));
+
     if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
+        fprintf(stderr, "nick --- %s\n", buf);
+        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+
+        if (sender_node != NULL) {
+            user_t *sender = (user_t *) sender_node->object;
+            ll_node_t *channels = state->channels->head;
+            int invalid_nick = 0;
+
+            while (channels != NULL){
+                channel_t *channel = (channel_t *)channels->object;
+                ll_node_t *channel_user_node = channel->users->head;
+                while (channel_user_node != NULL){
+                    user_t *channel_user = (user_t *) channel_user_node->object;
+                    if (strcmp(channel_user->nick,sender->nick)==0){
+                        char * msg = "To change your nick you must first leave the current channel.";
+                        sendall(socket, msg, strlen(msg));
+                        invalid_nick = 1;
+                        break;
+                    }
+                    channel_user_node = channel_user_node->next;
+                }
+                channels = channels->next;
+            }
+
+            if (invalid_nick) {
+                return;
+            }
+
+            user_t *user = (user_t *) sender_node->object;
+            user->socket = -1;
+        }
+
+        fprintf(stderr, "--\n");
         ll_node_t *found_node = get_user_from_nick(state->users, parameter);
         if (found_node != NULL) {
             user_t *user = (user_t *) found_node->object;
@@ -208,22 +297,25 @@ void handle_data(char * buf, int socket, struct server_state *state){
         } else {
             sendall(socket, "NOT REGISTERED", 15); //nick not taken, expecting registration
         }
+        fprintf(stderr, "--\n");
     } else if (strcmp(command, "REGISTER") == 0) {
+        //command = strtok(line," ");
+        fprintf(stderr, "register paramters: %s -!!_!_!_!_!_\n", parameter );
         char *nick = strtok(parameter, " ");
         char *email = strtok(NULL, " ");
-        char *password = strtok(NULL, " ");
+        char *password = strtok(NULL, "");
 
         user_t *new_user = (user_t *) calloc(sizeof(user_t), 1);
-        int n = 1024;
+        int n = 256;
 
         new_user->nick = (char *) calloc(sizeof(char), n);
         new_user->email = (char *) calloc(sizeof(char), n);
         new_user->password = (char *) calloc(sizeof(char), n);
         new_user->socket = socket;
 
-        strncpy(new_user->nick, nick, n);
-        strncpy(new_user->email, email, n);
-        strncpy(new_user->password, password, n);
+        strcpy(new_user->nick, nick);
+        strcpy(new_user->email, email);
+        strcpy(new_user->password, password);
 
         int token = rand() % 9000000 + 1000000;
         token = 0;
@@ -238,8 +330,10 @@ void handle_data(char * buf, int socket, struct server_state *state){
         char *tokenRequest = "TOKEN";
         sendall(socket, tokenRequest, strlen(tokenRequest));
     } else if (strcmp(command, "TOKEN") == 0) {
+        //command = strtok(line," ");
+        // TODO: compare tokens as strings
         char *nick = strtok(parameter, " ");
-        char *token_str = strtok(NULL, " ");
+        char *token_str = strtok(NULL, "");
         int received_token = atoi(token_str);
 
         ll_node_t *pending_user_node = get_user_from_nick(state->pending_users, nick);
@@ -257,7 +351,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
         }
     } else if (strcmp(command, "LOGIN") == 0) {
         char *nick = strtok(parameter, " ");
-        char *pass = strtok(NULL, " ");
+        char *pass = strtok(NULL, "\r\n");
         ll_node_t *user_node = get_user_from_nick(state->users, nick);
 
         if (user_node != NULL) {
@@ -278,12 +372,13 @@ void handle_data(char * buf, int socket, struct server_state *state){
         ll_node_t *channel_node = state->channels->head;
         while (channel_node != NULL && sender_node != NULL){
             user_t *sender = (user_t *) sender_node->object;
-            channel_t *channel = (channel_t *) channel_node;
+            channel_t *channel = (channel_t *) channel_node->object;
             ll_node_t *channel_user_node = channel->users->head;
             while (channel_user_node != NULL){
                 user_t *channel_user = (user_t *) channel_user_node->object;
                 if (strcmp(channel_user->nick,sender->nick)==0){
-                    ll_remove(channel->users, sender_node); // remove sender of PART from channel
+                    ll_node_t *node_to_remove = get_user_from_nick(channel->users, sender->nick);
+                    ll_remove(channel->users, node_to_remove);
                     break;
                 }
                 channel_user_node = channel_user_node->next;
@@ -304,8 +399,8 @@ void handle_data(char * buf, int socket, struct server_state *state){
             return;
         }
 
-        char *channelName = strtok(parameter, "\r\n");
-        //fprintf(stderr, "channelName = %s\n", channelName);
+        char *channelName = strtok(parameter, "");
+        fprintf(stderr, "channelName = %s\n", channelName);
         char *joinFmt = ":%s!%s JOIN %s\r\n";
         char *joinCmd = calloc(1024, sizeof(char));
         sprintf(joinCmd, joinFmt, sender->nick, sender->email, channelName);
@@ -314,17 +409,16 @@ void handle_data(char * buf, int socket, struct server_state *state){
         if (channel_node != NULL) {
             channel_t *channel = (channel_t *) channel_node->object;
             ll_add(channel->users, sender);
+            fprintf(stderr, "blahblohbleh\n");
 
             ll_node_t *channel_user_node = channel->users->head;
             while (channel_user_node != NULL) {
                 user_t *channel_user = (user_t *) channel_user_node->object;
                 // don't send join message to sender
                 if (strcmp(channel_user->nick, sender->nick) != 0 ) {
+                    fprintf(stderr, "beepboopbeep\n");
                     sendall(channel_user->socket, joinCmd, strlen(joinCmd));
                 }
-                // else{
-                //     // TODO TODO TODO send the JOINing user the names of everyone currently in channel
-                // }
                 channel_user_node = channel_user_node->next;
             }
         }
@@ -382,17 +476,23 @@ void handle_data(char * buf, int socket, struct server_state *state){
                     sendall(user->socket, privmsgCmd, strlen(privmsgCmd));
                 }
             }
+            else{ // no matching nick or channel, notify client
+                if ( sender_node != NULL) {
+                    user_t *sender = (user_t *)sender_node->object;
+                    sendall(sender->socket, "NOT FOUND", 10);
+                }
+            }
         }
     }
     else if (strcmp(command,"PART") == 0){
         //remove user from channel and send PART message to rest of channel
-        // TODO if user is last to leave chnnel, delete the channel
-        char *channelName = strtok(parameter, " ");
+        char *channelName = strtok(parameter, "");
         ll_node_t *channel_node = get_channel(state->channels, channelName);
 
         if (channel_node != NULL){
             channel_t *channel = (channel_t *) channel_node->object;
             ll_node_t *sender_node = get_user_from_socket(channel->users, socket);
+
             if (sender_node != NULL){
                 user_t* sender = (user_t *) sender_node->object;
                 ll_remove(channel->users, sender_node); // remove sender of PART from channel
@@ -409,16 +509,81 @@ void handle_data(char * buf, int socket, struct server_state *state){
             }
         }
     }
-    // // TODO implement /names and /channels to list names of ppl in channel
-    // // and list all channels on server
-    // else if (strcmp(command,"NAMES") == 0 || strcmp(command,"names") == 0){
-    //
-    // }
-    // else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
-    //
-    // }
+    else if (strcmp(command,"NAMES") == 0 || strcmp(command,"names") == 0){
+        if (parameter == NULL) {
+            return;
+        }
+        char *channelName = strtok(parameter, "");
+        ll_node_t *channel_node = get_channel(state->channels, channelName);
+        if (channel_node != NULL){
+            channel_t *channel = (channel_t *) channel_node->object;
+            if (channel != NULL){
+                int channel_users_length = ll_length(channel->users);
 
-    // TODO make default case to prompt "unknown command" in client
+                char * namesPrefix = "Users in the channel:\n";
+                char * names = calloc(channel_users_length*257 + strlen(namesPrefix), 1);
+                strcpy(names, namesPrefix);
+                int currentBase = strlen(namesPrefix);
+
+                ll_node_t *channel_names = channel->users->head;
+                while (channel_names != NULL){
+                    user_t *user = (user_t *) channel_names->object;
+                    char *name = user->nick;
+                    char *nameCmd = calloc(258, sizeof(char));
+                    sprintf(nameCmd, "\t%s\n",name);
+                    strcpy(names+currentBase,nameCmd);
+                    currentBase = currentBase + strlen(nameCmd);
+                    channel_names = channel_names->next;
+                }
+                //fprintf(stderr, "names = %s\n", names);
+                ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+                if (sender_node != NULL){
+                    user_t *sender = (user_t *) sender_node->object;
+                    sendall(sender->socket, names, strlen(names));
+                }
+            }
+
+        }
+    }
+    else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
+        ll_node_t *channels = state->channels->head;
+        if (channels != NULL){
+
+            int channels_length = ll_length(state->channels);
+
+            char * channelsPrefix = "Channels on the server:\n";
+            char * channel_list = calloc(channels_length*512 + strlen(channelsPrefix), 1);
+            strcpy(channel_list, channelsPrefix);
+            int currentBase = strlen(channelsPrefix);
+
+            while (channels != NULL){
+                channel_t *channel = (channel_t *) channels->object;
+                char *name = channel->name;
+                char *nameCmd = calloc(514, sizeof(char));
+                sprintf(nameCmd, "\t%s\n",name);
+                strcpy(channel_list + currentBase, nameCmd);
+                currentBase = currentBase + strlen(nameCmd);
+                channels = channels->next;
+
+            }
+
+            ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+            if (sender_node != NULL){
+                user_t *sender = (user_t *) sender_node->object;
+                sendall(sender->socket, channel_list, strlen(channel_list));
+            }
+        }
+
+    }
+
+    else{
+        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+        if (sender_node != NULL){
+            user_t *sender = (user_t *) sender_node->object;
+            char * uk = "Unknown command.\n";
+            sendall(sender->socket, uk, strlen(uk));
+        }
+    }
 }
 
 int main(void)
@@ -427,14 +592,12 @@ int main(void)
     fd_set master;    // master file descriptor list
     fd_set read_fds;  // temp file descriptor list for select()
     int fdmax;        // maximum file descriptor number
-
+    //char buf[1024];
 
     int listener;     // listening socket descriptor
     int newfd;        // newly accept()ed socket descriptor
     struct sockaddr_storage remoteaddr; // client address
     socklen_t addrlen;
-
-    char buf[1024];    // buffer for client data
     int nbytes;
 
     char remoteIP[INET6_ADDRSTRLEN];
@@ -509,6 +672,8 @@ int main(void)
         // run through the existing connections looking for data to read
         for(i = 0; i <= fdmax; i++) {
             if (FD_ISSET(i, &read_fds)) { // we got one!!
+
+
                 if (i == listener) {
                     // handle new connections
                     addrlen = sizeof remoteaddr;
@@ -527,32 +692,40 @@ int main(void)
                     }
                 } else {
                     // handle data from a client
-                    memset(buf, 0, sizeof(buf));
-                    if ((nbytes = recv(i, buf, sizeof buf, 0)) <= 0) {
+                    //char *buf = calloc(1024, sizeof(char));
+                    //memset(buf, 0, sizeof(buf));
+                    char *buf = recv_all(i);
+
+                    if (strlen(buf) == 0) {
+                    //if ((nbytes = recv(i, buf, sizeof buf, 0)) <= 0) {
                         // got error or connection closed by client
-                        if (nbytes == 0) {
+                        //if (nbytes == 0) {
                             // connection closed, find user that was using that socket and make it -1 (avail)
-                            printf("selectserver: socket %d hung up\n", i);
-                            ll_node_t *node = state->users->head;
-                            while (node != NULL){
-                                user_t *user = (user_t *) node->object;
-                                if (user->socket == i) {
-                                    user->socket = -1;
-                                    break;
-                                } else {
-                                    node = node->next;
-                                }
+                        printf("selectserver: socket %d hung up\n", i);
+                        ll_node_t *node = state->users->head;
+                        while (node != NULL){
+                            user_t *user = (user_t *) node->object;
+                            if (user->socket == i) {
+                                user->socket = -1;
+                                break;
+                            } else {
+                                node = node->next;
                             }
-                        } else {
-                            perror("recv");
                         }
+                        //} else {
+                        //    perror("recv");
+                        //}
                         close(i); // bye!
                         FD_CLR(i, &master); // remove from master set
                     } else {
                         // we got some data from a client
                         handle_data(buf, i, state);
                     }
+
+                    free(buf);
                 } // END handle data from client
+
+                //free(buf);
             } // END got new incoming connection
         } // END looping through file descriptors
     } // END for(;;)--and you thought it would never end!

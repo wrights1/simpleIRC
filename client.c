@@ -78,19 +78,18 @@ void init(int socket, char *user){
 	int userlen = (strlen(user)*2)+13;
 	char usermsg[userlen];
 	snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
-	n = sendall(socket, usermsg, userlen-1);
+	//n = sendall(socket, usermsg, userlen-1);
+	// TODO uncomment
 
 	#if DEBUG
 	fprintf(stderr, "MSG = %s\n", usermsg);
 	#endif
 }
 
-void parse_response(int socket, char* buf, global_state_t *state){
-	/*
+/*
 	takes raw server response and prints user-friendly things to the terminal
-
-	*/
-
+*/
+void parse_response(int socket, const char* buf, global_state_t *state){
 		//fprintf(stderr, "buf: %s\n", buf);
 		if (strcmp(buf,"REGISTERED") == 0 ){
 			fprintf(stderr, "%s is already registered, do you want to (1) enter the password, or (2) pick a new nickname?\n",
@@ -126,8 +125,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 				state->nickname[strlen(state->nickname) - 1] = 0;
 				if (strlen(state->nickname) == 0) {
-					//free(state->nickname);
-					state->nickname = getlogin();
+					strcpy(state->nickname, "cs375");
 				}
 
 				char *nickCmd = calloc(1024, sizeof(char));
@@ -138,6 +136,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			return;
 		}
 		else if (strcmp(buf,"NOT REGISTERED") == 0 ){
+			fprintf(stderr, "wtf wtf %s\n", state->nickname);
 			size_t asize = 1024;
 			char *password = (char *) calloc(asize, 1);
 			fprintf(stderr, "You must register this nickname. Choose a password: ");
@@ -159,6 +158,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 			char *registerCmd = calloc(1024, sizeof(char));
 			sprintf(registerCmd, "REGISTER %s %s %s\r\n", state->nickname, email, password);
+			fprintf(stderr, "register paramters: %s -!!_!_!_!_!_\n", registerCmd );
 			sendall(socket, registerCmd, strlen(registerCmd));
 
 			return;
@@ -215,7 +215,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			state->nickname[strlen(state->nickname) - 1] = 0;
 			if (strlen(state->nickname) == 0) {
 				memset(state->nickname, 0, sizeof(state->nickname));
-				strcpy(state->nickname, getlogin());
+				strcpy(state->nickname, "cs375");
 			}
 
 			char *nickCmd = calloc(1024, sizeof(char));
@@ -224,13 +224,17 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 			return;
 		}
+		else if(strcmp(buf,"NOT FOUND") == 0) {
+			fprintf(stderr, "No such nick/channel. Message not sent. \n" );
+			return;
+		}
 
 		int pmret;
 		int cmdflag = 0;
 		int i;
 		char *expressions[3] = { "^:(.*)!.* ([a-zA-Z]*) (#?[a-zA-Z0-9]*) :(.*)$",
-		 "^:(.*)!.* ([a-zA-Z]*) #(.*)$",
-		 "^:(.*)!.* ([a-zA-Z]*) :(.*)$" };
+		 "^:(.*)!.* ([a-zA-Z]*) #?(.*)$",
+		 "^:(.*)!.* ([a-zA-Z]*) :(.*)$"};
 
 		for ( i = 0 ; i < 3; i++){
 			regex_t pm_regex;
@@ -278,9 +282,6 @@ void parse_response(int socket, char* buf, global_state_t *state){
 					content = (char*) calloc(contentlen,1);
 					memcpy(content, buf + pm_match[3].rm_so, contentlen);
 				}
-
-
-
 				if (strcmp("PRIVMSG", cmd) == 0 ){
 					fprintf(stderr, "%s: %s\n", nick, content);
 					cmdflag = 1;
@@ -292,12 +293,14 @@ void parse_response(int socket, char* buf, global_state_t *state){
 					break;
 				}
 				if (strcmp("JOIN", cmd) == 0){
+					// TODO if nick is our nick then change the channel
 					fprintf(stderr, "~~~~~~~~ %s has joined the channel ~~~~~~~~\n", nick);
 					cmdflag = 1;
 					break;
 				}
 				if (strcmp("NICK", cmd) == 0 ){
 					//fprintf(stderr, "nick = %s\n", nick );
+					// TODO if nick is our nick then update nick to content
 					//fprintf(stderr, "content = %s\n", content);
 					fprintf(stderr,  "%s is now known as: %s\n", nick, content);
 					cmdflag = 1;
@@ -318,6 +321,16 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		}
 
 		if (!cmdflag){
+			char *bufCopy = calloc(strlen(buf)+1,1);
+			strcpy(bufCopy, buf);
+			char * command = strtok(bufCopy," ");
+			if (strcmp(command, "PING")==0){
+				//fprintf(stderr, "pong'd\n");
+				sendall(socket, "PONG :hello\r\n\0", 14);
+			}
+
+			free(bufCopy);
+
 			fprintf(stderr, "%s", buf);
 		}
 }
@@ -331,30 +344,11 @@ int chat(int socket){
 		stdin and the IRC server socket (input and output)
 	*/
 
-	/* ~~~~~~~~~~~~~~~~~~~~~~~~~  CURRENT FEATURES ~~~~~~~~~~~~~~~~~~~~~~~~
-		- /CLOSE
-			- leaves channel
-		- /QUIT
-			- disconnects from server and closes program
-		- /JOIN
-		- any real IRC command can be sent with /<command> and will work if
-		  properly formatted according to RFCs
-		- if no "/", input is sent as PRIVMSG to current channel/buffer
-	~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-
-	/* TODO
-		- send PINGs and handle PONG replies (or send PONGs and handle PING replies, check RFCs)
-			- these prevent server timeout, client will disconnect after 240(?) seconds if no ping recieved
-		- UI/formatting to make more readable
-		- any other client responsibilities?
-		- memory management?
-	*/
-
-	    //send initial NICK and USER commands
 		global_state_t *state = (global_state_t *) calloc(sizeof(global_state_t), 1);
 		state->nickname = (char *) calloc(sizeof(char), 1024);
 		state->nickname_registered = 0;
-		state->channel = "simpleIRC";
+		state->channel = calloc(256,1);
+		memset(state->channel, 0, 256);
 
 		fprintf(stderr, "[simpleIRC] Choose a nickname: ");
 		size_t nickSize = 255;
@@ -363,22 +357,23 @@ int chat(int socket){
 		state->nickname[strlen(state->nickname) - 1] = 0;
 		if (strlen(state->nickname) == 0) {
 			memset(state->nickname, 0, sizeof(state->nickname));
-			strcpy(state->nickname, getlogin());
+			//fprintf(stderr, "LOGIN = %s\n", getlogin());
+			//strcpy(state->nickname, getlogin());
+			strcpy(state->nickname, "cs375");
 		}
 
 		init(socket, state->nickname);
 
         fd_set readfds;
-		char* channel = NULL;
         while (1){
             FD_ZERO(&readfds);
             FD_SET(STDIN, &readfds);
             FD_SET(socket, &readfds);
-			if (channel != NULL){
-				fprintf(stderr, "[%s] ", channel);
+			if (strcmp(state->channel,"") == 0){
+				fprintf(stderr, "[simpleIRC] ");
 			}
 			else{
-				fprintf(stderr, "[simpleIRC] ");
+				fprintf(stderr, "[%s] ", state->channel);
 			}
 
             select(socket+1, &readfds, NULL, NULL, NULL);
@@ -398,47 +393,67 @@ int chat(int socket){
 					if (command != NULL){
 						command = command + sizeof(char); //remove  "/"
 						if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
-							if (channel != NULL ){
-								fprintf(stderr, "You are already in %s. You must leave this channel to join another one.\n", channel );
+							if (strcmp(state->channel,"") != 0 ){
+								fprintf(stderr, "You are already in %s. You must leave this channel to join another one.\n", state->channel );
 							}
 							else {
 								char channel_line[256];
 								strcpy(channel_line, str);
-								channel = strtok(channel_line,"#");
-								channel = strtok(NULL,"#"); // only update channel var on join command
-								if ( channel != NULL) {
+								char *channel = strtok(channel_line," ");
+								channel = strtok(NULL,""); // only update channel var on join command
+								if ( strcmp(channel,"") != 0 ) {
 									channel[strlen(channel)-1] = 0; // remove newline
 									//fprintf(stderr, "channel = %s\n", channel);
 								}
+								strcpy(state->channel, channel);
 								str = str + sizeof(char); // remove leading "/"
 								sendall(socket, str, strlen(str));
-								fprintf(stderr, " ============================== JOINED CHANNEL %s ============================== \n", channel );
+
+								char *namesFmt = "NAMES %s\r\n";
+				                char *namesCmd = calloc(1024, strlen("NAMES ") + strlen(state->channel));
+				                sprintf(namesCmd, namesFmt, state->channel);
+								sendall(socket, namesCmd, strlen(namesCmd));
+								fprintf(stderr, " ============================== JOINED CHANNEL %s ============================== \n", state->channel );
 							}
 						}
-						else if ( channel != NULL && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
-							int partlen = strlen(channel)+8;
+						else if ( strcmp(state->channel,"") != 0  && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
+							int partlen = strlen(state->channel)+8;
 							char part[partlen];
-							snprintf(part, partlen, "PART #%s",channel);
+							snprintf(part, partlen, "PART %s\r\n",state->channel);
 							part[partlen-2] = 13; // 13 = 0x0D = \r
 							part[partlen-1] = 10; // 10 = =x0A = \n
 							sendall(socket, part, partlen);
-							fprintf(stderr, " ============================== CLOSED CHANNEL %s ============================== \n", channel );
-							/*
-								TODO????
-								keep track of previous channels so you can join channels from other channels (or maybe just don't allow JOIN at all if already in a channel)
-							*/
-							channel = NULL;
+							fprintf(stderr, " ============================== CLOSED CHANNEL %s ============================== \n", state->channel );
+							memset(state->channel, 0, sizeof(state->channel));
 						}
 						else if (strcmp("quit",command) == 0 || strcmp("QUIT",command) == 0){
 							str = str + sizeof(char);
 							sendall(socket, str, strlen(str));
 							exit(0);
 						}
-						// else if (strcmp("nick", command) == 0 || strcmp("NICK", command) == 0) {
-						// 	sendall(socket, "QUIT :simpleIRC 1.0.0", 5);
-						// 	str = str + sizeof(char);
-						// 	sendall(socket, str, strlen(str));
-						// }
+						else if (strcmp("names",command) == 0 || strcmp("NAMES",command) == 0){
+							char *namesFmt = "NAMES %s\r\n";
+			                char *namesCmd = calloc(1024, strlen("NAMES ") + strlen(state->channel));
+			                sprintf(namesCmd, namesFmt, state->channel);
+							// sends "NAMES <currentChannelName>"
+							sendall(socket, namesCmd, strlen(namesCmd));
+
+						}
+						else if (strcmp("channels",command) == 0 || strcmp("channels",command) == 0){
+							sendall(socket, "CHANNELS \r\n", 11);
+						}
+						else if (strcmp("nick", command) == 0 || strcmp("NICK", command) == 0) {
+							char tmp[256];
+							strcpy(tmp, str);
+							char *new_nick = strtok(tmp," ");
+							new_nick = strtok(NULL, "\n");
+							strcpy(state->nickname, new_nick);
+
+							//fprintf(stderr, "%s - %s - %s\n", tmp, new_nick, str);
+
+							str = str + sizeof(char);
+							sendall(socket, str, strlen(str));
+						}
 						else {
 							str = str + sizeof(char); // remove "/", send unmodified input
 							sendall(socket, str, strlen(str));
@@ -447,14 +462,15 @@ int chat(int socket){
 				}
 				else{
 					// is message, send as PRIVMSG to channel (must keep track of current channel)
-					if (channel != NULL){
-						int prefixlen = strlen(channel)+12;
-						char prefix[prefixlen];
-						snprintf(prefix, prefixlen, "PRIVMSG #%s :",channel);
+					if (strcmp(state->channel, "") != 0){
+						int prefixlen = strlen(state->channel)+12;
+						char *prefix = calloc(strlen(str)+ prefixlen, 1);
+						snprintf(prefix, prefixlen, "PRIVMSG %s :",state->channel);
 						strncat(prefix, str, strlen(str));
-						prefix[strlen(prefix)-1] = 13; // 13 = 0x0D = \r
-						prefix[strlen(prefix)] = 10; // 10 = =x0A = \n
-						sendall(socket, prefix, strlen(str) + prefixlen);
+						// prefix[strlen(prefix)-1] = 13; // 13 = 0x0D = \r
+						// prefix[strlen(prefix)] = 10; // 10 = =x0A = \n
+						//sendall(socket, prefix, strlen(str) + prefixlen);
+						sendall(socket, prefix, strlen(prefix));
 					}
 					else{
                 		sendall(socket, str, strlen(str));
