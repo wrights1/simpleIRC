@@ -559,6 +559,10 @@ int chat(int socket){
 
 int main(int argc, char **argv)
 {
+	if (argc != 3) {
+		return 0;
+	}
+
 	int sockfd, numbytes;
 	struct addrinfo hints, *servinfo, *p;
 	int rv;
@@ -567,7 +571,7 @@ int main(int argc, char **argv)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	if ((rv = getaddrinfo("localhost", "6667", &hints, &servinfo)) != 0) {
+	if ((rv = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
 		return 1;
 	}
