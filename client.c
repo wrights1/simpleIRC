@@ -22,7 +22,7 @@
 
 #include <arpa/inet.h>
 
-#define DEBUG 0
+#define DEBUG 1
 #define STDIN 0  // file descriptor for standard input
 
 struct global_state {
@@ -65,9 +65,9 @@ void init(int socket, char *user){
 	send bootstrap NICK and USER messages
 	*/
 	int nicklen = strlen(user)+8;
-	char nickmsg[nicklen];
-	snprintf(nickmsg, nicklen, "NICK %s\r\n", user);
-	int n = sendall(socket, nickmsg, nicklen-1);
+	char *nickmsg = calloc(nicklen, sizeof(char));
+	sprintf(nickmsg, "NICK %s\r\n", user);
+	int n = sendall(socket, nickmsg, strlen(nickmsg));
 
 	#if DEBUG
 	fprintf(stderr, "USERNAME = %s\n", user );
@@ -75,24 +75,28 @@ void init(int socket, char *user){
 	fprintf(stderr, "MSG = %s\n", nickmsg);
 	#endif
 
-	int userlen = (strlen(user)*2)+13;
-	char usermsg[userlen];
-	snprintf(usermsg, userlen, "USER %s 0 * :%s\r\n", user, user);
-	//n = sendall(socket, usermsg, userlen-1);
-	// TODO uncomment
+	free(nickmsg);
+
+	char *userFmt = "USER %s 0 * :%s\r\n";
+	char *userMsg = calloc(strlen(userFmt) + strlen(user) * 2, 1);
+	sprintf(userMsg, "USER %s 0 * :%s\r\n", user, user);
+	n = sendall(socket, userMsg, strlen(userMsg));
 
 	#if DEBUG
-	fprintf(stderr, "MSG = %s\n", usermsg);
+	fprintf(stderr, "MSG = %s\n", userMsg);
 	#endif
+
+	free(userMsg);
 }
 
 /*
 	takes raw server response and prints user-friendly things to the terminal
 */
 void parse_response(int socket, const char* buf, global_state_t *state){
-		//fprintf(stderr, "buf: %s\n", buf);
+		fprintf(stderr, "buf: %s\n", buf);
 		if (strcmp(buf,"REGISTERED") == 0 ){
-			fprintf(stderr, "%s is already registered, do you want to (1) enter the password, or (2) pick a new nickname?\n",
+			fprintf(stderr, "%s is already registered, do you want to (1) enter" 
+			    "the password, or (2) pick a new nickname?\n",
 				state->nickname );
 			fprintf(stderr, "[Enter 1 or 2]: ");
 			size_t asize = 256;
@@ -109,7 +113,8 @@ void parse_response(int socket, const char* buf, global_state_t *state){
 				char *password= (char*) calloc(asize,1);
 				getline(&password, &asize,stdin);
 				while (strlen(password) < 6) {
-					fprintf(stderr, "[simpleIRC] Passwords can't be less than 6 characters. Password: ");
+					fprintf(stderr, "[simpleIRC] Passwords can't be less than 6 "
+					"characters. Password: ");
 					getline(&password, &asize,stdin);
 				}
 				password[strlen(password)-1] = 0;
@@ -142,7 +147,8 @@ void parse_response(int socket, const char* buf, global_state_t *state){
 			fprintf(stderr, "You must register this nickname. Choose a password: ");
 			getline(&password, &asize, stdin);
 			while (strlen(password) < 6 ){
-				fprintf(stderr, "[simpleIRC] Your password can't be less than 6 characters. Choose a better password: ");
+				fprintf(stderr, "[simpleIRC] Your password can't be less than 6 "
+				"characters. Choose a better password: ");
 				getline(&password, &asize, stdin);
 			}
 			password[strlen(password) - 1] = 0;
@@ -164,7 +170,8 @@ void parse_response(int socket, const char* buf, global_state_t *state){
 			return;
 		}
 		else if (strcmp(buf, "TOKEN") == 0 || strcmp(buf, "WRONG TOKEN") == 0) {
-			fprintf(stderr, "We sent you an email with a verification code in it. Enter it here: ");
+			fprintf(stderr, "We sent you an email with a verification code in it."
+			" Enter it here: ");
 			char *token = (char *) calloc(256, 1);
 			size_t n = 256;
 			getline(&token, &n, stdin);
