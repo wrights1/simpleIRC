@@ -340,8 +340,6 @@ void handle_data(char * buf, int socket, struct server_state *state){
             if (strcmp(pending_user->token, token_str) == 0) {
                 ll_remove(state->pending_users, pending_user_node);
                 ll_add(state->users, pending_user);
-                char *tokenSuccess = "RIGHT TOKEN\r\n";
-                sendall(socket, tokenSuccess, strlen(tokenSuccess));
 
                 char *joinFmt = ":%s!%s NICK :%s\r\n";
                 char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
@@ -360,9 +358,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
         if (user_node != NULL) {
             user_t *user = (user_t *) user_node->object;
             if (strcmp(user->password, pass) == 0) {
-                char *rightPass = "RIGHT PASSWORD\r\n";
                 user->socket = socket;
-                sendall(socket, rightPass, strlen(rightPass));
 
                 char *joinFmt = ":%s!%s NICK :%s\r\n";
                 char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);

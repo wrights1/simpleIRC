@@ -144,6 +144,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 	fprintf(stderr, "buf  =  %s\n", buf);
 
 	if (strcmp(buf,"REGISTERED") == 0 ){
+		state->nickname_registered = 0;
+
 		fprintf(stderr, "%s is already registered, do you want to (1) enter" 
 			" the password, or (2) pick a new nickname?\n",
 			state->nickname );
@@ -190,6 +192,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		return;
 	}
 	else if (strcmp(buf,"NOT REGISTERED") == 0 ){
+		state->nickname_registered = 0;
+
 		size_t asize = 1024;
 		char *password = (char *) calloc(asize, 1);
 		fprintf(stderr, "You must register this nickname. Choose a password: ");
@@ -218,6 +222,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		return;
 	}
 	else if (strcmp(buf, "TOKEN") == 0 || strcmp(buf, "WRONG TOKEN") == 0) {
+		state->nickname_registered = 0;
+
 		fprintf(stderr, "We sent you an email with a verification code in it."
 		" Enter it here: ");
 		char *token = (char *) calloc(256, 1);
@@ -235,17 +241,20 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 		return;
 	}
+	/*
 	else if (strcmp(buf,"RIGHT TOKEN")==0){
 		fprintf(stderr, "Nickname registered.\n");
 		state->nickname_registered = 1;
 		return;
 	}
 	else if (strcmp(buf,"RIGHT PASSWORD")==0){
-		fprintf(stderr, "Logged in successfully as %s.\n", state->pending_nickname);
 		state->nickname_registered = 1;
 		return;
 	}
+	*/
 	else if(strcmp(buf,"WRONG PASSWORD")==0){
+		state->nickname_registered = 0;
+
 		size_t asize = 1024;
 		fprintf(stderr, "Incorrect. Password: ");
 		char *password = (char *) calloc(asize, 1);
@@ -263,6 +272,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		return;
 	}
 	else if (strcmp(buf,"USER LOGGED IN") == 0) {
+		state->nickname_registered = 0;
+
 		fprintf(stderr, "User already logged in.\n");
 		fprintf(stderr, "[simpleIRC] Choose a different nickname: ");
 		size_t nickSize = 255;
@@ -324,7 +335,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				recipient = (char*) calloc(recipientlen,1);
 				memcpy(recipient, buf + pm_match[3].rm_so, recipientlen);
 
-				contentlen = (pm_match[4].rm_eo - pm_match[4].rm_so)-1;
+				contentlen = (pm_match[4].rm_eo - pm_match[4].rm_so);
 				content = (char*) calloc(contentlen,1);
 				memcpy(content, buf + pm_match[4].rm_so, contentlen);
 
@@ -359,11 +370,12 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				// If the nick being changed is ours or we haven't registered
 				// then update our nick to the new one
 				if (strcmp(state->nickname, nick) == 0) {
-					strcpy(state->nickname, content + 1);
-				} else if (state->nickname_registered == 1 && 
-						(strcmp(state->nickname, state->pending_nickname) != 0)) {
+					fprintf(stderr, "Logged in successfully as %s.\n", 
+						state->pending_nickname);
 					strcpy(state->nickname, content + 1);
 				} else if (state->nickname_registered == 0) {
+					fprintf(stderr, "Logged in successfully as %s.\n", 
+						state->pending_nickname);
 					strcpy(state->nickname, content + 1);
 				} else {
 					fprintf(stderr,  "%s is now known as: %s\n", nick, content + 1);
@@ -412,7 +424,7 @@ int chat(int socket){
 	global_state_t *state = (global_state_t *) calloc(sizeof(global_state_t), 1);
 	state->nickname = (char *) calloc(sizeof(char), 1024);
 	state->pending_nickname = calloc(sizeof(char), 1024);
-	state->nickname_registered = 0;
+	state->nickname_registered = 1;
 	state->channel = calloc(256,1);
 	memset(state->channel, 0, 256);
 
@@ -517,7 +529,6 @@ int chat(int socket){
 						char *new_nick = strtok(NULL, "\n");
 						state->nickname_registered = 0;
 						strcpy(state->pending_nickname, new_nick);
-						printf("dit con cu\n");
 
 						str = str + sizeof(char); // remove "/", send unmodified input
 						sendall(socket, str, strlen(str));
