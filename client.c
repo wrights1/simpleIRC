@@ -72,22 +72,12 @@ void init(global_state_t *state, int socket, char *user){
 	int n = sendall(socket, nickmsg, strlen(nickmsg));
 	strcpy(state->pending_nickname, user);
 
-	#if DEBUG
-	fprintf(stderr, "USERNAME = %s\n", user );
-	fprintf(stderr, "sizeof(user) = %lu\n", strlen(user));
-	fprintf(stderr, "MSG = %s\n", nickmsg);
-	#endif
-
 	free(nickmsg);
 
 	char *userFmt = "USER %s 0 * :%s\r\n";
 	char *userMsg = calloc(strlen(userFmt) + strlen(user) * 2, 1);
 	sprintf(userMsg, "USER %s 0 * :%s\r\n", user, user);
 	n = sendall(socket, userMsg, strlen(userMsg));
-
-	#if DEBUG
-	fprintf(stderr, "MSG = %s\n", userMsg);
-	#endif
 
 	free(userMsg);
 }
@@ -142,7 +132,6 @@ char *recv_all(int socket) {
 */
 void parse_response(int socket, char* buf, global_state_t *state){
 	strip_newline(buf);
-	fprintf(stderr, "buf  =  %s\n", buf);
 
 	if (strcmp(buf,"REGISTERED") == 0 ){
 		state->nickname_registered = 0;
@@ -217,7 +206,6 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 		char *registerCmd = calloc(1024, sizeof(char));
 		sprintf(registerCmd, "REGISTER %s %s %s\r\n", state->pending_nickname, email, password);
-		fprintf(stderr, "register paramters: %s -!!_!_!_!_!_\n", registerCmd );
 		sendall(socket, registerCmd, strlen(registerCmd));
 
 		return;
@@ -242,17 +230,6 @@ void parse_response(int socket, char* buf, global_state_t *state){
 
 		return;
 	}
-	/*
-	else if (strcmp(buf,"RIGHT TOKEN")==0){
-		fprintf(stderr, "Nickname registered.\n");
-		state->nickname_registered = 1;
-		return;
-	}
-	else if (strcmp(buf,"RIGHT PASSWORD")==0){
-		state->nickname_registered = 1;
-		return;
-	}
-	*/
 	else if(strcmp(buf,"WRONG PASSWORD")==0){
 		state->nickname_registered = 0;
 
@@ -424,11 +401,11 @@ void parse_response(int socket, char* buf, global_state_t *state){
 		if (strcmp(command, "PING")==0){
 			//fprintf(stderr, "pong'd\n");
 			sendall(socket, "PONG :hello\r\n\0", 14);
+		} else {
+			fprintf(stderr, "%s\n", buf);
 		}
 
 		free(bufCopy);
-
-		fprintf(stderr, "%s\n", buf);
 	}
 }
 
@@ -590,7 +567,7 @@ int main(int argc, char **argv)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	if ((rv = getaddrinfo("chat.freenode.net", "6667", &hints, &servinfo)) != 0) {
+	if ((rv = getaddrinfo("localhost", "6667", &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
 		return 1;
 	}
