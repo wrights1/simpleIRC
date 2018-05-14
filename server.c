@@ -26,8 +26,8 @@ struct user{
     char * nick;
     char * email;
     char * password;
+    char * token;
     int socket;
-    int token;
 };
 typedef struct user user_t;
 
@@ -81,7 +81,7 @@ int sendall(int s, char *buf, int len){
 
     only returns nonzero on failure to connect to mail server
 */
-int send_email(int token, char *email, char * nick){
+int send_email(char *token, char *email, char * nick){
     int sockfd, numbytes;
 	char buf[100];
 	struct addrinfo hints, *servinfo, *p;
@@ -118,7 +118,8 @@ int send_email(int token, char *email, char * nick){
     char * emailFmt = "HELO cs375\nMAIL FROM: server@simpleIRC.com\n"
                    "RCPT TO: %s\nDATA\nFrom: server@simpleIRC.com\nTo: %s\n"
                    "Subject: simpleIRC Verification Code\n"
-                   "Here is your cerification code for registering the nickname \"%s\" on the simpleIRC server: %d.\r\n"
+                   "Here is your cerification code for registering the nickname "
+                   "\"%s\" on the simpleIRC server: %s.\r\n"
                    "Enter this where prompted in your terminal, then hit enter."
                    "\n.\n";
 
@@ -308,9 +309,10 @@ void handle_data(char * buf, int socket, struct server_state *state){
         user_t *new_user = (user_t *) calloc(sizeof(user_t), 1);
         int n = 256;
 
-        new_user->nick = (char *) calloc(sizeof(char), n);
-        new_user->email = (char *) calloc(sizeof(char), n);
-        new_user->password = (char *) calloc(sizeof(char), n);
+        new_user->nick = calloc(sizeof(char), n);
+        new_user->email = calloc(sizeof(char), n);
+        new_user->password = calloc(sizeof(char), n);
+        new_user->token = calloc(sizeof(char), 16);
         new_user->socket = socket;
 
         strcpy(new_user->nick, nick);
@@ -318,28 +320,23 @@ void handle_data(char * buf, int socket, struct server_state *state){
         strcpy(new_user->password, password);
 
         int token = rand() % 9000000 + 1000000;
-        token = 0;
-        new_user->token = token;
-
-        //send_email(token,email,nick);
+        char *token_str = calloc(16, sizeof(char));
+        sprintf(token_str, "%d", token);
+        strcpy(new_user->token, token_str);
+        send_email(token_str,email,nick);
 
         ll_add(state->pending_users, new_user);
-
-        //fprintf(stderr, "token: %d\n", token);
 
         char *tokenRequest = "TOKEN";
         sendall(socket, tokenRequest, strlen(tokenRequest));
     } else if (strcmp(command, "TOKEN") == 0) {
-        //command = strtok(line," ");
-        // TODO: compare tokens as strings
         char *nick = strtok(parameter, " ");
         char *token_str = strtok(NULL, "");
-        int received_token = atoi(token_str);
 
         ll_node_t *pending_user_node = get_user_from_nick(state->pending_users, nick);
         if (pending_user_node != NULL) {
             user_t *pending_user = (user_t *) pending_user_node->object;
-            if (pending_user->token == received_token) {
+            if (strcmp(pending_user->token, token_str) == 0) {
                 ll_remove(state->pending_users, pending_user_node);
                 ll_add(state->users, pending_user);
                 char *tokenSuccess = "RIGHT TOKEN";
