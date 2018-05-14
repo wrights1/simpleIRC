@@ -30,6 +30,7 @@ struct global_state {
 	char *pending_nickname;
 	int nickname_registered;
 	char* channel;
+	char* pending_channel;
 };
 typedef struct global_state global_state_t;
 
@@ -356,13 +357,32 @@ void parse_response(int socket, char* buf, global_state_t *state){
 				break;
 			}
 			if (strcmp("PART", cmd) == 0 ) {
-				fprintf(stderr, "~~~~~~~~ %s left the channel ~~~~~~~~\n", nick);
+				if (strcmp(nick, state->nickname) == 0) {
+					fprintf(stderr, " ============================== "
+						"LEFT CHANNEL %s ============================== \n", 
+						state->channel );
+					strcpy(state->channel, "");
+				} else {
+					fprintf(stderr, "~~~~~~~~ %s left the channel ~~~~~~~~\n", nick);
+				}
 				cmdflag = 1;
 				break;
 			}
 			if (strcmp("JOIN", cmd) == 0){
-				// TODO if nick is our nick then change the channel
-				fprintf(stderr, "~~~~~~~~ %s has joined the channel ~~~~~~~~\n", nick);
+				if (strcmp(nick, state->nickname) == 0) {
+					strcpy(state->channel, state->pending_channel);
+
+					char *namesFmt = "NAMES %s\r\n";
+					char *namesCmd = calloc(1024, strlen("NAMES ") + strlen(state->channel));
+					sprintf(namesCmd, namesFmt, state->channel);
+					sendall(socket, namesCmd, strlen(namesCmd));
+					fprintf(stderr, " ============================== "
+						"JOINED CHANNEL %s ============================== \n", 
+						state->channel );
+				} else {
+					fprintf(stderr, "~~~~~~~~ %s has joined the channel ~~~~~~~~\n", 
+						nick);
+				}
 				cmdflag = 1;
 				break;
 			}
@@ -422,11 +442,11 @@ int chat(int socket){
 	*/
 
 	global_state_t *state = (global_state_t *) calloc(sizeof(global_state_t), 1);
-	state->nickname = (char *) calloc(sizeof(char), 1024);
+	state->nickname = calloc(sizeof(char), 1024);
 	state->pending_nickname = calloc(sizeof(char), 1024);
 	state->nickname_registered = 1;
 	state->channel = calloc(256,1);
-	memset(state->channel, 0, 256);
+	state->pending_channel = calloc(256, 1);
 
 	fprintf(stderr, "[simpleIRC] Choose a nickname: ");
 	size_t nickSize = 255;
@@ -448,10 +468,10 @@ int chat(int socket){
 		FD_SET(STDIN, &readfds);
 		FD_SET(socket, &readfds);
 		if (strcmp(state->channel,"") == 0){
-			fprintf(stderr, "[simpleIRC %s] ", state->nickname);
+			fprintf(stderr, "[simpleIRC] ");
 		}
 		else{
-			fprintf(stderr, "[%s %s] ", state->channel, state->nickname);
+			fprintf(stderr, "[%s] ", state->channel);
 		}
 
 		select(socket+1, &readfds, NULL, NULL, NULL);
@@ -462,7 +482,7 @@ int chat(int socket){
 			char *str = (char*) calloc(bufSize,1);
 			getline(&str,&bufSize,stdin);
 
-			if (str[0] == '/' ) {
+			if (strlen(str) > 1 && str[0] == '/' ) {
 				// is command, send exactly what user typed but without / at beginning
 				char line[512];
 				strcpy(line, str);  // copy of str to be tokenized
@@ -483,31 +503,21 @@ int chat(int socket){
 							channel = strtok(NULL,""); // only update channel var on join command
 							if ( strcmp(channel,"") != 0 ) {
 								channel[strlen(channel)-1] = 0; // remove newline
-								//fprintf(stderr, "channel = %s\n", channel);
+								strcpy(state->pending_channel, channel);
+								str = str + sizeof(char); // remove leading "/"
+								sendall(socket, str, strlen(str));
+							} else {
+								fprintf(stderr, "Channel name cannot be empty!");
 							}
-							strcpy(state->channel, channel);
-							str = str + sizeof(char); // remove leading "/"
-							sendall(socket, str, strlen(str));
-
-							char *namesFmt = "NAMES %s\r\n";
-							char *namesCmd = calloc(1024, strlen("NAMES ") + strlen(state->channel));
-							sprintf(namesCmd, namesFmt, state->channel);
-							sendall(socket, namesCmd, strlen(namesCmd));
-							fprintf(stderr, " ============================== "
-							"JOINED CHANNEL %s ============================== \n", state->channel );
 						}
 					}
-					else if ( strcmp(state->channel,"") != 0  
-						&& (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
+					else if (strcmp(state->channel,"") != 0  && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
 						int partlen = strlen(state->channel)+8;
 						char part[partlen];
 						snprintf(part, partlen, "PART %s\r\n",state->channel);
 						part[partlen-2] = 13; // 13 = 0x0D = \r
 						part[partlen-1] = 10; // 10 = =x0A = \n
 						sendall(socket, part, partlen);
-						fprintf(stderr, " ============================== "
-						"CLOSED CHANNEL %s ============================== \n", state->channel );
-						memset(state->channel, 0, sizeof(state->channel));
 					}
 					else if (strcmp("quit",command) == 0 || strcmp("QUIT",command) == 0){
 						str = str + sizeof(char);
@@ -539,7 +549,7 @@ int chat(int socket){
 					}
 				}
 			}
-			else{
+			else if (strlen(str) > 1) {
 				// is message, send as PRIVMSG to channel (must keep track of current channel)
 				if (strcmp(state->channel, "") != 0){
 					int prefixlen = strlen(state->channel)+12;
@@ -580,7 +590,7 @@ int main(int argc, char **argv)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	if ((rv = getaddrinfo("localhost", "6667", &hints, &servinfo)) != 0) {
+	if ((rv = getaddrinfo("chat.freenode.net", "6667", &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
 		return 1;
 	}
