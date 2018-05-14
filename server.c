@@ -268,7 +268,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
                 while (channel_user_node != NULL){
                     user_t *channel_user = (user_t *) channel_user_node->object;
                     if (strcmp(channel_user->nick,sender->nick)==0){
-                        char * msg = "To change your nick you must first leave the current channel.";
+                        char * msg = "To change your nick you must first leave the current channel.\r\n";
                         sendall(socket, msg, strlen(msg));
                         invalid_nick = 1;
                         break;
@@ -291,12 +291,12 @@ void handle_data(char * buf, int socket, struct server_state *state){
         if (found_node != NULL) {
             user_t *user = (user_t *) found_node->object;
             if (user->socket == -1) {
-                sendall(socket, "REGISTERED", 11); //nick taken but not logged in, expecting password
+                sendall(socket, "REGISTERED\r\n", 13); //nick taken but not logged in, expecting password
             } else {
-                sendall(socket, "USER LOGGED IN", 15); //nick taken and currently logged in, pick new name
+                sendall(socket, "USER LOGGED IN\r\n", 17); //nick taken and currently logged in, pick new name
             }
         } else {
-            sendall(socket, "NOT REGISTERED", 15); //nick not taken, expecting registration
+            sendall(socket, "NOT REGISTERED\r\n", 17); //nick not taken, expecting registration
         }
         fprintf(stderr, "--\n");
     } else if (strcmp(command, "REGISTER") == 0) {
@@ -320,14 +320,15 @@ void handle_data(char * buf, int socket, struct server_state *state){
         strcpy(new_user->password, password);
 
         int token = rand() % 9000000 + 1000000;
+        token = 0;
         char *token_str = calloc(16, sizeof(char));
         sprintf(token_str, "%d", token);
         strcpy(new_user->token, token_str);
-        send_email(token_str,email,nick);
+        //send_email(token_str,email,nick);
 
         ll_add(state->pending_users, new_user);
 
-        char *tokenRequest = "TOKEN";
+        char *tokenRequest = "TOKEN\r\n";
         sendall(socket, tokenRequest, strlen(tokenRequest));
     } else if (strcmp(command, "TOKEN") == 0) {
         char *nick = strtok(parameter, " ");
@@ -339,10 +340,15 @@ void handle_data(char * buf, int socket, struct server_state *state){
             if (strcmp(pending_user->token, token_str) == 0) {
                 ll_remove(state->pending_users, pending_user_node);
                 ll_add(state->users, pending_user);
-                char *tokenSuccess = "RIGHT TOKEN";
+                char *tokenSuccess = "RIGHT TOKEN\r\n";
                 sendall(socket, tokenSuccess, strlen(tokenSuccess));
+
+                char *joinFmt = ":%s!%s NICK :%s\r\n";
+                char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
+                sprintf(joinMsg, joinFmt, nick, pending_user->email, nick);
+                sendall(socket, joinMsg, strlen(joinMsg));
             } else {
-                char *wrongToken = "WRONG TOKEN";
+                char *wrongToken = "WRONG TOKEN\r\n";
                 sendall(socket, wrongToken, strlen(wrongToken));
             }
         }
@@ -354,12 +360,17 @@ void handle_data(char * buf, int socket, struct server_state *state){
         if (user_node != NULL) {
             user_t *user = (user_t *) user_node->object;
             if (strcmp(user->password, pass) == 0) {
-                char *rightPass = "RIGHT PASSWORD";
+                char *rightPass = "RIGHT PASSWORD\r\n";
                 user->socket = socket;
                 sendall(socket, rightPass, strlen(rightPass));
+
+                char *joinFmt = ":%s!%s NICK :%s\r\n";
+                char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
+                sprintf(joinMsg, joinFmt, nick, user->email, nick);
+                sendall(socket, joinMsg, strlen(joinMsg));
             }
             else {
-                char *wrongPass = "WRONG PASSWORD";
+                char *wrongPass = "WRONG PASSWORD\r\n";
                 sendall(socket, wrongPass, strlen(wrongPass));
             }
         }
@@ -406,16 +417,11 @@ void handle_data(char * buf, int socket, struct server_state *state){
         if (channel_node != NULL) {
             channel_t *channel = (channel_t *) channel_node->object;
             ll_add(channel->users, sender);
-            fprintf(stderr, "blahblohbleh\n");
 
             ll_node_t *channel_user_node = channel->users->head;
             while (channel_user_node != NULL) {
                 user_t *channel_user = (user_t *) channel_user_node->object;
-                // don't send join message to sender
-                if (strcmp(channel_user->nick, sender->nick) != 0 ) {
-                    fprintf(stderr, "beepboopbeep\n");
-                    sendall(channel_user->socket, joinCmd, strlen(joinCmd));
-                }
+                sendall(channel_user->socket, joinCmd, strlen(joinCmd));
                 channel_user_node = channel_user_node->next;
             }
         }
@@ -428,7 +434,8 @@ void handle_data(char * buf, int socket, struct server_state *state){
 
             ll_add(state->channels, channel);
             ll_add(channel->users, sender);
-            fprintf(stderr, "channel->name = %s\n", channel->name );
+            fprintf(stderr, "channel->name = %s\n", channel->name);
+            sendall(sender->socket, joinCmd, strlen(joinCmd));
         }
     }
     else if (strcmp(command,"PRIVMSG") == 0 || strcmp(command,"privmsg") == 0){
@@ -476,7 +483,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
             else{ // no matching nick or channel, notify client
                 if ( sender_node != NULL) {
                     user_t *sender = (user_t *)sender_node->object;
-                    sendall(sender->socket, "NOT FOUND", 10);
+                    sendall(sender->socket, "NOT FOUND\r\n", 12);
                 }
             }
         }
@@ -532,7 +539,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
                     currentBase = currentBase + strlen(nameCmd);
                     channel_names = channel_names->next;
                 }
-                //fprintf(stderr, "names = %s\n", names);
+
                 ll_node_t *sender_node = get_user_from_socket(state->users, socket);
                 if (sender_node != NULL){
                     user_t *sender = (user_t *) sender_node->object;
@@ -577,7 +584,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
         ll_node_t *sender_node = get_user_from_socket(state->users, socket);
         if (sender_node != NULL){
             user_t *sender = (user_t *) sender_node->object;
-            char * uk = "Unknown command.\n";
+            char * uk = "Unknown command.\r\n";
             sendall(sender->socket, uk, strlen(uk));
         }
     }
