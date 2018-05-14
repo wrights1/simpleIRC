@@ -43,6 +43,7 @@ struct server_state{
     linked_list_t *pending_users;
     linked_list_t *channels;
 };
+typedef struct server_state server_state_t;
 
 /*
 	A function that sends the entire buf string if the socket is open
@@ -226,6 +227,56 @@ char *recv_all(int socket) {
     return buf;
 }
 
+void handle_nick(server_state_t *state, int socket, char *nick)
+{
+    ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+
+    if (sender_node != NULL) {
+        user_t *sender = (user_t *) sender_node->object;
+        ll_node_t *channels = state->channels->head;
+        int invalid_nick = 0;
+
+        while (channels != NULL){
+            channel_t *channel = (channel_t *)channels->object;
+            ll_node_t *channel_user_node = channel->users->head;
+            while (channel_user_node != NULL){
+                user_t *channel_user = (user_t *) channel_user_node->object;
+                if (strcmp(channel_user->nick,sender->nick)==0){
+                    char * msg = "To change your nick you must first leave the "
+                        "current channel.\r\n";
+                    sendall(socket, msg, strlen(msg));
+                    invalid_nick = 1;
+                    break;
+                }
+                channel_user_node = channel_user_node->next;
+            }
+            channels = channels->next;
+        }
+
+        if (invalid_nick) {
+            return;
+        }
+
+        user_t *user = (user_t *) sender_node->object;
+        user->socket = -1;
+    }
+
+    ll_node_t *found_node = get_user_from_nick(state->users, nick);
+    if (found_node != NULL) {
+        user_t *user = (user_t *) found_node->object;
+        if (user->socket == -1) {
+            //nick taken but not logged in, expecting password
+            sendall(socket, "REGISTERED\r\n", 13); 
+        } else {
+            //nick taken and currently logged in, pick new name
+            sendall(socket, "USER LOGGED IN\r\n", 17);
+        }
+    } else {
+        //nick not taken, expecting registration
+        sendall(socket, "NOT REGISTERED\r\n", 17);
+    }
+}
+
 /*
     parses client messages and respondes accordingly to each one.
 
@@ -254,51 +305,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
         fprintf(stderr, "parameter ---- %s --- %lu\n", parameter, strlen(parameter));
 
     if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
-        fprintf(stderr, "nick --- %s\n", buf);
-        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
-
-        if (sender_node != NULL) {
-            user_t *sender = (user_t *) sender_node->object;
-            ll_node_t *channels = state->channels->head;
-            int invalid_nick = 0;
-
-            while (channels != NULL){
-                channel_t *channel = (channel_t *)channels->object;
-                ll_node_t *channel_user_node = channel->users->head;
-                while (channel_user_node != NULL){
-                    user_t *channel_user = (user_t *) channel_user_node->object;
-                    if (strcmp(channel_user->nick,sender->nick)==0){
-                        char * msg = "To change your nick you must first leave the current channel.\r\n";
-                        sendall(socket, msg, strlen(msg));
-                        invalid_nick = 1;
-                        break;
-                    }
-                    channel_user_node = channel_user_node->next;
-                }
-                channels = channels->next;
-            }
-
-            if (invalid_nick) {
-                return;
-            }
-
-            user_t *user = (user_t *) sender_node->object;
-            user->socket = -1;
-        }
-
-        fprintf(stderr, "--\n");
-        ll_node_t *found_node = get_user_from_nick(state->users, parameter);
-        if (found_node != NULL) {
-            user_t *user = (user_t *) found_node->object;
-            if (user->socket == -1) {
-                sendall(socket, "REGISTERED\r\n", 13); //nick taken but not logged in, expecting password
-            } else {
-                sendall(socket, "USER LOGGED IN\r\n", 17); //nick taken and currently logged in, pick new name
-            }
-        } else {
-            sendall(socket, "NOT REGISTERED\r\n", 17); //nick not taken, expecting registration
-        }
-        fprintf(stderr, "--\n");
+        handle_nick(state, socket, parameter);
     } else if (strcmp(command, "REGISTER") == 0) {
         //command = strtok(line," ");
         fprintf(stderr, "register paramters: %s -!!_!_!_!_!_\n", parameter );
@@ -495,17 +502,20 @@ void handle_data(char * buf, int socket, struct server_state *state){
 
             if (sender_node != NULL){
                 user_t* sender = (user_t *) sender_node->object;
-                ll_remove(channel->users, sender_node); // remove sender of PART from channel
 
                 char *partFmt = ":%s!%s PART %s\r\n";
                 char *partCmd = calloc(1024, sizeof(char));
                 ll_node_t* channel_user = channel->users->head;
-                while (channel_user != NULL) { // send PART message to rest of channel
+
+                // send PART message to channel
+                while (channel_user != NULL) {
                     user_t *user = (user_t *) channel_user->object;
                     sprintf(partCmd, partFmt, sender->nick, sender->email, channelName);
                     sendall(user->socket, partCmd, strlen(partCmd));
                     channel_user = channel_user->next;
                 }
+
+                ll_remove(channel->users, sender_node); // remove sender of PART from channel
             }
         }
     }
