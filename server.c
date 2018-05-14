@@ -277,6 +277,39 @@ void handle_nick(server_state_t *state, int socket, char *nick)
     }
 }
 
+void handle_register(server_state_t *state, int socket, char *parameters)
+{
+    //command = strtok(line," ");
+    char *nick = strtok(parameters, " ");
+    char *email = strtok(NULL, " ");
+    char *password = strtok(NULL, "");
+
+    user_t *new_user = (user_t *) calloc(sizeof(user_t), 1);
+    int n = 256;
+
+    new_user->nick = calloc(sizeof(char), n);
+    new_user->email = calloc(sizeof(char), n);
+    new_user->password = calloc(sizeof(char), n);
+    new_user->token = calloc(sizeof(char), 16);
+    new_user->socket = socket;
+
+    strcpy(new_user->nick, nick);
+    strcpy(new_user->email, email);
+    strcpy(new_user->password, password);
+
+    int token = rand() % 9000000 + 1000000;
+    token = 0;
+    char *token_str = calloc(16, sizeof(char));
+    sprintf(token_str, "%d", token);
+    strcpy(new_user->token, token_str);
+    //send_email(token_str,email,nick);
+
+    ll_add(state->pending_users, new_user);
+
+    char *tokenRequest = "TOKEN\r\n";
+    sendall(socket, tokenRequest, strlen(tokenRequest));
+}
+
 /*
     parses client messages and respondes accordingly to each one.
 
@@ -307,36 +340,7 @@ void handle_data(char * buf, int socket, struct server_state *state){
     if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
         handle_nick(state, socket, parameter);
     } else if (strcmp(command, "REGISTER") == 0) {
-        //command = strtok(line," ");
-        fprintf(stderr, "register paramters: %s -!!_!_!_!_!_\n", parameter );
-        char *nick = strtok(parameter, " ");
-        char *email = strtok(NULL, " ");
-        char *password = strtok(NULL, "");
-
-        user_t *new_user = (user_t *) calloc(sizeof(user_t), 1);
-        int n = 256;
-
-        new_user->nick = calloc(sizeof(char), n);
-        new_user->email = calloc(sizeof(char), n);
-        new_user->password = calloc(sizeof(char), n);
-        new_user->token = calloc(sizeof(char), 16);
-        new_user->socket = socket;
-
-        strcpy(new_user->nick, nick);
-        strcpy(new_user->email, email);
-        strcpy(new_user->password, password);
-
-        int token = rand() % 9000000 + 1000000;
-        token = 0;
-        char *token_str = calloc(16, sizeof(char));
-        sprintf(token_str, "%d", token);
-        strcpy(new_user->token, token_str);
-        //send_email(token_str,email,nick);
-
-        ll_add(state->pending_users, new_user);
-
-        char *tokenRequest = "TOKEN\r\n";
-        sendall(socket, tokenRequest, strlen(tokenRequest));
+        handle_register(state, socket, parameter);
     } else if (strcmp(command, "TOKEN") == 0) {
         char *nick = strtok(parameter, " ");
         char *token_str = strtok(NULL, "");
