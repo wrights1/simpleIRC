@@ -310,6 +310,91 @@ void handle_register(server_state_t *state, int socket, char *parameters)
     sendall(socket, tokenRequest, strlen(tokenRequest));
 }
 
+void handle_token(server_state_t *state, int socket, char *parameters)
+{
+    char *nick = strtok(parameters, " ");
+    char *token_str = strtok(NULL, "");
+
+    ll_node_t *pending_user_node = get_user_from_nick(state->pending_users, nick);
+    if (pending_user_node != NULL) {
+        user_t *pending_user = (user_t *) pending_user_node->object;
+        if (strcmp(pending_user->token, token_str) == 0) {
+            ll_remove(state->pending_users, pending_user_node);
+            ll_add(state->users, pending_user);
+
+            char *joinFmt = ":%s!%s NICK :%s\r\n";
+            char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
+            sprintf(joinMsg, joinFmt, nick, pending_user->email, nick);
+            sendall(socket, joinMsg, strlen(joinMsg));
+        } else {
+            char *wrongToken = "WRONG TOKEN\r\n";
+            sendall(socket, wrongToken, strlen(wrongToken));
+        }
+    }
+}
+
+void handle_login(server_state_t *state, int socket, char *parameters)
+{
+    char *nick = strtok(parameters, " ");
+    char *pass = strtok(NULL, "\r\n");
+    ll_node_t *user_node = get_user_from_nick(state->users, nick);
+
+    if (user_node != NULL) {
+        user_t *user = (user_t *) user_node->object;
+        if (strcmp(user->password, pass) == 0) {
+            user->socket = socket;
+
+            char *joinFmt = ":%s!%s NICK :%s\r\n";
+            char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
+            sprintf(joinMsg, joinFmt, nick, user->email, nick);
+            sendall(socket, joinMsg, strlen(joinMsg));
+        }
+        else {
+            char *wrongPass = "WRONG PASSWORD\r\n";
+            sendall(socket, wrongPass, strlen(wrongPass));
+        }
+    }
+}
+
+void handle_quit(server_state_t *state, int socket)
+{
+    // remove QUITting user from all channels they are in and set their socket to -1
+    ll_node_t *sender_node = get_user_from_socket(state->users, socket);
+    ll_node_t *channel_node = state->channels->head;
+    while (channel_node != NULL && sender_node != NULL){
+        user_t *sender = (user_t *) sender_node->object;
+        channel_t *channel = (channel_t *) channel_node->object;
+        ll_node_t *channel_user_node = channel->users->head;
+        while (channel_user_node != NULL){
+            user_t *channel_user = (user_t *) channel_user_node->object;
+            if (strcmp(channel_user->nick,sender->nick)==0){
+                ll_node_t *node_to_remove = get_user_from_nick(channel->users, sender->nick);
+
+                char *partFmt = ":%s!%s PART %s\r\n";
+                char *partCmd = calloc(1024, sizeof(char));
+                ll_node_t* user_to_send_part = channel->users->head;
+
+                // send PART message to channel
+                while (user_to_send_part != NULL && channel_user_node != user_to_send_part) {
+                    user_t *user = (user_t *) user_to_send_part->object;
+                    sprintf(partCmd, partFmt, sender->nick, sender->email, channel->name);
+                    sendall(user->socket, partCmd, strlen(partCmd));
+                    user_to_send_part = user_to_send_part->next;
+                }
+                ll_remove(channel->users, node_to_remove);
+
+                break;
+            }
+            channel_user_node = channel_user_node->next;
+        }
+        channel_node = channel_node->next;
+    }
+    if (sender_node != NULL){
+        user_t *sender = (user_t *) sender_node->object;
+        sender->socket = -1;
+    }
+}
+
 /*
     parses client messages and respondes accordingly to each one.
 
@@ -342,68 +427,11 @@ void handle_data(char * buf, int socket, struct server_state *state){
     } else if (strcmp(command, "REGISTER") == 0) {
         handle_register(state, socket, parameter);
     } else if (strcmp(command, "TOKEN") == 0) {
-        char *nick = strtok(parameter, " ");
-        char *token_str = strtok(NULL, "");
-
-        ll_node_t *pending_user_node = get_user_from_nick(state->pending_users, nick);
-        if (pending_user_node != NULL) {
-            user_t *pending_user = (user_t *) pending_user_node->object;
-            if (strcmp(pending_user->token, token_str) == 0) {
-                ll_remove(state->pending_users, pending_user_node);
-                ll_add(state->users, pending_user);
-
-                char *joinFmt = ":%s!%s NICK :%s\r\n";
-                char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
-                sprintf(joinMsg, joinFmt, nick, pending_user->email, nick);
-                sendall(socket, joinMsg, strlen(joinMsg));
-            } else {
-                char *wrongToken = "WRONG TOKEN\r\n";
-                sendall(socket, wrongToken, strlen(wrongToken));
-            }
-        }
+        handle_token(state, socket, parameter);
     } else if (strcmp(command, "LOGIN") == 0) {
-        char *nick = strtok(parameter, " ");
-        char *pass = strtok(NULL, "\r\n");
-        ll_node_t *user_node = get_user_from_nick(state->users, nick);
-
-        if (user_node != NULL) {
-            user_t *user = (user_t *) user_node->object;
-            if (strcmp(user->password, pass) == 0) {
-                user->socket = socket;
-
-                char *joinFmt = ":%s!%s NICK :%s\r\n";
-                char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
-                sprintf(joinMsg, joinFmt, nick, user->email, nick);
-                sendall(socket, joinMsg, strlen(joinMsg));
-            }
-            else {
-                char *wrongPass = "WRONG PASSWORD\r\n";
-                sendall(socket, wrongPass, strlen(wrongPass));
-            }
-        }
+        handle_login(state, socket, parameter);
     } else if (strcmp(command, "QUIT") == 0 || strcmp(command, "quit") == 0) {
-        // remove QUITting user from all channels they are in and set their socket to -1
-        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
-        ll_node_t *channel_node = state->channels->head;
-        while (channel_node != NULL && sender_node != NULL){
-            user_t *sender = (user_t *) sender_node->object;
-            channel_t *channel = (channel_t *) channel_node->object;
-            ll_node_t *channel_user_node = channel->users->head;
-            while (channel_user_node != NULL){
-                user_t *channel_user = (user_t *) channel_user_node->object;
-                if (strcmp(channel_user->nick,sender->nick)==0){
-                    ll_node_t *node_to_remove = get_user_from_nick(channel->users, sender->nick);
-                    ll_remove(channel->users, node_to_remove);
-                    break;
-                }
-                channel_user_node = channel_user_node->next;
-            }
-            channel_node = channel_node->next;
-        }
-        if (sender_node != NULL){
-            user_t *sender = (user_t *) sender_node->object;
-            sender->socket = -1;
-        }
+        handle_quit(state, socket);
     }
     else if (strcmp(command,"JOIN") == 0 || strcmp(command,"join") == 0){
         ll_node_t *sender_node = get_user_from_socket(state->users, socket);
