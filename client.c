@@ -125,6 +125,14 @@ char *recv_all(int socket) {
     return buf;
 }
 
+void to_lower(char *str)
+{
+	int i;
+	for (i = 0; i < strlen(str); i++) {
+		str[i] = tolower(str[i]);
+	}
+}
+
 /*
     parses client messages and respondes accordingly to each one.
 /*
@@ -409,6 +417,35 @@ void parse_response(int socket, char* buf, global_state_t *state){
 	}
 }
 
+void join_channel(global_state_t *state, int socket, char *command)
+{
+	if (strcmp(state->channel,"") != 0 ){
+		fprintf(stderr, "You are already in %s. "
+		"You must leave this channel to join another one.\n"
+		, state->channel );
+	} else {
+		// get the channel's name
+		char *channel_line = calloc(strlen(command) + 1, sizeof(char));
+		strcpy(channel_line, command);
+		char *channel = strtok(channel_line," ");
+		channel = strtok(NULL,""); 
+
+		if (strcmp(channel,"") != 0) {
+			// remove newline
+			channel[strlen(channel)-1] = 0; 
+			// Save the name of the channel the user wants to join
+			strcpy(state->pending_channel, channel);
+
+			command = command + sizeof(char); // remove leading "/"
+			sendall(socket, command, strlen(command));
+		} else {
+			fprintf(stderr, "Channel name cannot be empty!");
+		}
+
+		free(channel_line);
+	}
+}
+
 int chat(int socket){
 	/*
 		whenever there is response from server, it will be output without
@@ -467,26 +504,10 @@ int chat(int socket){
 				command = strtok(line," \n");
 				if (command != NULL){
 					command = command + sizeof(char); //remove  "/"
-					if (strcmp("join",command) == 0 || strcmp("JOIN",command) == 0){
-						if (strcmp(state->channel,"") != 0 ){
-							fprintf(stderr, "You are already in %s. "
-							"You must leave this channel to join another one.\n"
-							, state->channel );
-						}
-						else {
-							char channel_line[256];
-							strcpy(channel_line, str);
-							char *channel = strtok(channel_line," ");
-							channel = strtok(NULL,""); // only update channel var on join command
-							if ( strcmp(channel,"") != 0 ) {
-								channel[strlen(channel)-1] = 0; // remove newline
-								strcpy(state->pending_channel, channel);
-								str = str + sizeof(char); // remove leading "/"
-								sendall(socket, str, strlen(str));
-							} else {
-								fprintf(stderr, "Channel name cannot be empty!");
-							}
-						}
+					to_lower(command);
+
+					if (strcmp("join",command) == 0) {
+						join_channel(state, socket, str);
 					}
 					else if (strcmp(state->channel,"") != 0  && (strcmp("close",command) == 0 || strcmp("CLOSE",command) == 0)){
 						int partlen = strlen(state->channel)+8;
