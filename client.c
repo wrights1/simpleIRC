@@ -557,10 +557,16 @@ int chat(int socket){
 	return 0;
 }
 
+void print_usage(char *prog_name, int exit_code)
+{
+	fprintf(stderr, "\nUsage: %s <server> <port>\n\n", prog_name);
+	exit(exit_code);
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 3) {
-		return 0;
+		print_usage(argv[0], 0);
 	}
 
 	int sockfd, numbytes;
@@ -573,7 +579,7 @@ int main(int argc, char **argv)
 
 	if ((rv = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-		return 1;
+		print_usage(argv[0], 1);
 	}
 
     p = servinfo;
@@ -585,12 +591,12 @@ int main(int argc, char **argv)
 	if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
 		perror("client: connect");
 		close(sockfd);
-		exit(1);
+		print_usage(argv[0], 1);
 	}
 
 	if (p == NULL) {
 		fprintf(stderr, "client: failed to connect\n");
-		return 2;
+		print_usage(argv[0], 2);
 	}
 
 	freeaddrinfo(servinfo); // all done with this structure
