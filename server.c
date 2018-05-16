@@ -34,7 +34,6 @@ typedef struct user user_t;
 struct channel{
     linked_list_t *users;
     char * name;
-    linked_list_t* ops;
 };
 typedef struct channel channel_t;
 
@@ -338,7 +337,6 @@ void handle_register(server_state_t *state, int socket, char *parameters)
     strcpy(new_user->password, password);
 
     int token = rand() % 9000000 + 1000000;
-    token = 0;
     char *token_str = calloc(16, sizeof(char));
     sprintf(token_str, "%d", token);
     strcpy(new_user->token, token_str);
@@ -404,13 +402,14 @@ void handle_login(server_state_t *state, int socket, char *parameters)
             char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
             sprintf(joinMsg, joinFmt, nick, user->email, nick);
             sendall(socket, joinMsg, strlen(joinMsg));
+
+            free(joinMsg);
         } else if (user->socket != -1) {
             // if the account is logged in then reject the request
             char *msg = "USER LOGGED IN\r\n";
             sendall(socket, msg, strlen(msg));
         } else {
             // if the password is incorrect then notify the user
-            printf("deo hieu %s\n", pass);
             char *wrongPass = "WRONG PASSWORD\r\n";
             sendall(socket, wrongPass, strlen(wrongPass));
         }
@@ -707,12 +706,8 @@ void handle_data(char * buf, int socket, struct server_state *state){
     strcpy(line, buf);  // copy of str to be tokenized
     char * command = NULL;
     command = strtok(line," ");
-    fprintf(stderr, "command: %s\n", command);
-    //memset(line,0,strlen(line));
-    //strcpy(line, buf);
+
     char * parameter = strtok(NULL, "");
-    if (parameter != NULL)
-        fprintf(stderr, "parameter ---- %s --- %lu\n", parameter, strlen(parameter));
 
     if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
         handle_nick(state, socket, parameter);
@@ -735,12 +730,8 @@ void handle_data(char * buf, int socket, struct server_state *state){
     } else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
         handle_channels(state, socket);
     } else {
-        ll_node_t *sender_node = get_user_from_socket(state->users, socket);
-        if (sender_node != NULL){
-            user_t *sender = (user_t *) sender_node->object;
-            char * uk = "Unknown command.\r\n";
-            sendall(sender->socket, uk, strlen(uk));
-        }
+        char * uk = "Unknown command.\r\n";
+        sendall(socket, uk, strlen(uk));
     }
 }
 
