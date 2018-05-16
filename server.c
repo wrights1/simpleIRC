@@ -187,6 +187,10 @@ ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
     return NULL;
 }
 
+/*
+    Strip trailing \r, \n or space from the given string.
+
+*/
 void strip_newline(char *buf) {
     int i = strlen(buf) - 1;
     while (i >= 0) {
@@ -199,6 +203,11 @@ void strip_newline(char *buf) {
     }
 }
 
+/*
+    Receive 1 byte at a time from the given socket until a newline is found.
+    Return a string containing the entire string including the newline, which
+        have to be freed.
+*/
 char *recv_all(int socket) {
     int n = 1024;
     int len = 0;
@@ -227,6 +236,17 @@ char *recv_all(int socket) {
     return buf;
 }
 
+/*
+    Handle the NICK command from the user.
+    - Doesn't allow the user to change nick if they're in a channel.
+    - Otherwise, log the user out.
+    - If the requested nick doesn't exist, send a message to the user saying
+        the nick has to be registered.
+    - Otherwise, if the account with the existing nick is logged in, notify the
+    user that the account is logged in, and if that account isn't logged in then
+    notify the user that the account is registered but not logged in - therefore
+    available to be used.
+*/
 void handle_nick(server_state_t *state, int socket, char *nick)
 {
     ll_node_t *sender_node = get_user_from_socket(state->users, socket);
@@ -266,23 +286,43 @@ void handle_nick(server_state_t *state, int socket, char *nick)
         user_t *user = (user_t *) found_node->object;
         if (user->socket == -1) {
             //nick taken but not logged in, expecting password
-            sendall(socket, "REGISTERED\r\n", 13); 
+            char *msg = "REGISTERED\r\n";
+            sendall(socket, msg, strlen(msg));
         } else {
             //nick taken and currently logged in, pick new name
-            sendall(socket, "USER LOGGED IN\r\n", 17);
+            char *msg = "USER LOGGED IN\r\n";
+            sendall(socket, msg, strlen(msg));
         }
     } else {
         //nick not taken, expecting registration
-        sendall(socket, "NOT REGISTERED\r\n", 17);
+        char *msg = "NOT REGISTERED\r\n";
+        sendall(socket, msg, strlen(msg));
     }
 }
 
+/*
+    Handle the account registration request from the user.
+        - If the requested nickname already exists, reject the registration request.
+        - Otherwise, create a new user with the given details and put in a list
+            of users pending registration completion.
+        - Generate a random 7-digit token to the email the user gave.
+        - Send a TOKEN request to the user requesting the above token.
+ */
 void handle_register(server_state_t *state, int socket, char *parameters)
 {
     //command = strtok(line," ");
     char *nick = strtok(parameters, " ");
     char *email = strtok(NULL, " ");
     char *password = strtok(NULL, "");
+
+    ll_node_t *user_node = get_user_from_nick(state->users, nick);
+    if (user_node != NULL) {
+        // if the registering nickname already exists, reject the registration
+        // request
+        char *msg = "Requested nickname already exists!\r\n";
+        sendall(socket, msg, strlen(msg));
+        return;
+    }
 
     user_t *new_user = (user_t *) calloc(sizeof(user_t), 1);
     int n = 256;
@@ -298,6 +338,7 @@ void handle_register(server_state_t *state, int socket, char *parameters)
     strcpy(new_user->password, password);
 
     int token = rand() % 9000000 + 1000000;
+    token = 0;
     char *token_str = calloc(16, sizeof(char));
     sprintf(token_str, "%d", token);
     strcpy(new_user->token, token_str);
@@ -309,6 +350,9 @@ void handle_register(server_state_t *state, int socket, char *parameters)
     sendall(socket, tokenRequest, strlen(tokenRequest));
 }
 
+/*
+    Handle the token given by the user.
+ */
 void handle_token(server_state_t *state, int socket, char *parameters)
 {
     char *nick = strtok(parameters, " ");
@@ -318,55 +362,81 @@ void handle_token(server_state_t *state, int socket, char *parameters)
     if (pending_user_node != NULL) {
         user_t *pending_user = (user_t *) pending_user_node->object;
         if (strcmp(pending_user->token, token_str) == 0) {
+            // If the token matches the one we generate, add the user to the 
+            // list of registered users and remove them from the list of
+            // pending users.
             ll_remove(state->pending_users, pending_user_node);
             ll_add(state->users, pending_user);
 
+            // Send a NICK command to the user letting them know the registration
+            // process completed successfully.
             char *joinFmt = ":%s!%s NICK :%s\r\n";
             char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
             sprintf(joinMsg, joinFmt, nick, pending_user->email, nick);
             sendall(socket, joinMsg, strlen(joinMsg));
         } else {
+            // If the tokens don't match, send a WRONG TOKEN response to the user.
             char *wrongToken = "WRONG TOKEN\r\n";
             sendall(socket, wrongToken, strlen(wrongToken));
         }
     }
 }
 
+/*
+    Handle the login request from user.
+ */
 void handle_login(server_state_t *state, int socket, char *parameters)
 {
     char *nick = strtok(parameters, " ");
     char *pass = strtok(NULL, "\r\n");
+
+    // get the user with the given nick
     ll_node_t *user_node = get_user_from_nick(state->users, nick);
 
     if (user_node != NULL) {
         user_t *user = (user_t *) user_node->object;
-        if (strcmp(user->password, pass) == 0) {
+        if (strcmp(user->password, pass) == 0 && user->socket == -1) {
+            // Send a NICK command to the user if the password is correct,
+            // and the requested account is not logged in.
             user->socket = socket;
 
             char *joinFmt = ":%s!%s NICK :%s\r\n";
             char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
             sprintf(joinMsg, joinFmt, nick, user->email, nick);
             sendall(socket, joinMsg, strlen(joinMsg));
-        }
-        else {
+        } else if (user->socket != -1) {
+            // if the account is logged in then reject the request
+            char *msg = "USER LOGGED IN\r\n";
+            sendall(socket, msg, strlen(msg));
+        } else {
+            // if the password is incorrect then notify the user
+            printf("deo hieu %s\n", pass);
             char *wrongPass = "WRONG PASSWORD\r\n";
             sendall(socket, wrongPass, strlen(wrongPass));
         }
     }
 }
 
+/*
+    Handle the user's request to QUIT/disconnect from the server.
+ */
 void handle_quit(server_state_t *state, int socket)
 {
     // remove QUITting user from all channels they are in and set their socket to -1
     ll_node_t *sender_node = get_user_from_socket(state->users, socket);
     ll_node_t *channel_node = state->channels->head;
+
     while (channel_node != NULL && sender_node != NULL){
         user_t *sender = (user_t *) sender_node->object;
         channel_t *channel = (channel_t *) channel_node->object;
         ll_node_t *channel_user_node = channel->users->head;
+
+        // loop through all the channels
         while (channel_user_node != NULL){
             user_t *channel_user = (user_t *) channel_user_node->object;
-            if (strcmp(channel_user->nick,sender->nick)==0){
+            if (strcmp(channel_user->nick, sender->nick)==0){
+                // If we find the user in the channel, remove them and notify
+                // everyone in the channel
                 ll_node_t *node_to_remove = get_user_from_nick(channel->users, sender->nick);
 
                 char *partFmt = ":%s!%s PART %s\r\n";
@@ -388,21 +458,27 @@ void handle_quit(server_state_t *state, int socket)
         }
         channel_node = channel_node->next;
     }
+
+    // set the user's socket to -1
     if (sender_node != NULL){
         user_t *sender = (user_t *) sender_node->object;
         sender->socket = -1;
     }
 }
 
+/*
+    Handle a JOIN request from the users.
+ */
 void handle_join(server_state_t *state, int socket, char *parameters)
 {
+    // Get the user using the current socket
     ll_node_t *sender_node = get_user_from_socket(state->users, socket);
     user_t *sender = NULL;
     if (sender_node != NULL) {
         sender = (user_t *) sender_node->object;
     } else {
         return;
-    }
+    }    
 
     char *channelName = strtok(parameters, "");
     fprintf(stderr, "channelName = %s\n", channelName);
@@ -412,6 +488,8 @@ void handle_join(server_state_t *state, int socket, char *parameters)
 
     ll_node_t *channel_node = get_channel(state->channels, channelName);
     if (channel_node != NULL) {
+        // if channel found, add the user to it and notify everyone in the 
+        // channel, including the joining user.
         channel_t *channel = (channel_t *) channel_node->object;
         ll_add(channel->users, sender);
 
@@ -421,9 +499,8 @@ void handle_join(server_state_t *state, int socket, char *parameters)
             sendall(channel_user->socket, joinCmd, strlen(joinCmd));
             channel_user_node = channel_user_node->next;
         }
-    }
-    // didn't find channel, create one and add user to it
-    else {
+    } else {
+        // didn't find channel, create one and add user to it
         channel_t *channel = calloc(sizeof(channel_t),1);
         channel->users = calloc(sizeof(linked_list_t), 1);
         channel->name = calloc(strlen(channelName),1);
@@ -436,6 +513,9 @@ void handle_join(server_state_t *state, int socket, char *parameters)
     }
 }
 
+/*
+    Handle the PRIVMSG command from users.
+*/
 void handle_privmsg(server_state_t *state, int socket, char *parameters)
 {
     char *channelName = strtok(parameters, " ");
@@ -447,8 +527,11 @@ void handle_privmsg(server_state_t *state, int socket, char *parameters)
     char *privmsgFmt = ":%s!%s PRIVMSG %s :%s\r\n";
     char *privmsgCmd = calloc(1024, sizeof(char));
 
+    // Treat the recipient as a channel's name and look for the channel
     ll_node_t *channel_node = get_channel(state->channels, channelName);
     if (channel_node != NULL) {
+        // if a channel is found, broadcast the message to everyone in the channel
+        // except for the sender
         channel_t *channel = (channel_t *) channel_node->object;
         ll_node_t *sender_node = get_user_from_socket(channel->users, socket);
 
@@ -478,9 +561,9 @@ void handle_privmsg(server_state_t *state, int socket, char *parameters)
                 sprintf(privmsgCmd, privmsgFmt, sender->nick, sender->email, channelName, content);
                 sendall(user->socket, privmsgCmd, strlen(privmsgCmd));
             }
-        }
-        else{ // no matching nick or channel, notify client
-            if ( sender_node != NULL) {
+        } else {
+            // no matching nick or channel, notify client
+            if (sender_node != NULL) {
                 user_t *sender = (user_t *)sender_node->object;
                 sendall(sender->socket, "NOT FOUND\r\n", 12);
             }
@@ -488,13 +571,17 @@ void handle_privmsg(server_state_t *state, int socket, char *parameters)
     }
 }
 
+/* 
+    Handle users' request to leave a channel
+*/
 void handle_part(server_state_t *state, int socket, char *parameters)
 {
-    //remove user from channel and send PART message to rest of channel
+    // find the channel
     char *channelName = strtok(parameters, "");
     ll_node_t *channel_node = get_channel(state->channels, channelName);
 
-    if (channel_node != NULL){
+    if (channel_node != NULL) {
+        //remove user from channel and send PART message to rest of channel
         channel_t *channel = (channel_t *) channel_node->object;
         ll_node_t *sender_node = get_user_from_socket(channel->users, socket);
 
@@ -513,23 +600,30 @@ void handle_part(server_state_t *state, int socket, char *parameters)
                 channel_user = channel_user->next;
             }
 
-            ll_remove(channel->users, sender_node); // remove sender of PART from channel
+            // remove sender of PART from channel
+            ll_remove(channel->users, sender_node); 
         }
     }
 }
 
+/* 
+    Handle NAMES commands from the users.
+*/
 void handle_names(server_state_t *state, int socket, char *parameters)
 {
     if (parameters == NULL) {
         return;
     }
 
+    // get the requested channel
     char *channelName = strtok(parameters, "");
     ll_node_t *channel_node = get_channel(state->channels, channelName);
 
     if (channel_node != NULL){
         channel_t *channel = (channel_t *) channel_node->object;
+
         if (channel != NULL){
+            // get the names from all the users in the channel
             int channel_users_length = ll_length(channel->users);
 
             char * namesPrefix = "Users in the channel:\n";
@@ -548,6 +642,7 @@ void handle_names(server_state_t *state, int socket, char *parameters)
                 channel_names = channel_names->next;
             }
 
+            // send the list of users to the client
             ll_node_t *sender_node = get_user_from_socket(state->users, socket);
             if (sender_node != NULL){
                 user_t *sender = (user_t *) sender_node->object;
@@ -557,11 +652,15 @@ void handle_names(server_state_t *state, int socket, char *parameters)
     }
 }
 
+/*
+    Handle CHANNELS commands from users.
+ */
 void handle_channels(server_state_t *state, int socket)
 {
+    // Get the list of channels and send their names to the user
     ll_node_t *channels = state->channels->head;
-    if (channels != NULL){
 
+    if (channels != NULL) {
         int channels_length = ll_length(state->channels);
 
         char * channelsPrefix = "Channels on the server:\n";
@@ -569,6 +668,7 @@ void handle_channels(server_state_t *state, int socket)
         strcpy(channel_list, channelsPrefix);
         int currentBase = strlen(channelsPrefix);
 
+        // loop through the channels and get their names
         while (channels != NULL){
             channel_t *channel = (channel_t *) channels->object;
             char *name = channel->name;
@@ -580,6 +680,8 @@ void handle_channels(server_state_t *state, int socket)
 
         }
 
+        // identify the sender using the socket value and send the list of 
+        // channel names to that user
         ll_node_t *sender_node = get_user_from_socket(state->users, socket);
         if (sender_node != NULL){
             user_t *sender = (user_t *) sender_node->object;
