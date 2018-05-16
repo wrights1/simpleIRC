@@ -8,6 +8,7 @@
 
 */
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,8 +55,8 @@ typedef struct server_state server_state_t;
     Return:
         - A -1 if a failure and a 0 on success
 */
-int sendall(int s, char *buf, int len){
-
+int sendall(int s, char *buf, int len)
+{
 	int total = 0; // how many bytes we've spent
 	int bytesleft = len; // how many we have left to send
 	int n;
@@ -81,7 +82,8 @@ int sendall(int s, char *buf, int len){
 
     only returns nonzero on failure to connect to mail server
 */
-int send_email(char *token, char *email, char * nick){
+int send_email(char *token, char *email, char * nick)
+{
     int sockfd, numbytes;
 	char buf[100];
 	struct addrinfo hints, *servinfo, *p;
@@ -125,9 +127,9 @@ int send_email(char *token, char *email, char * nick){
 
     sprintf(emailCmd,emailFmt,email, email, nick, token);
     sendall(sockfd, emailCmd, strlen(emailCmd));
+
     free(emailCmd);
     close(sockfd);
-
 }
 
 /*
@@ -135,7 +137,8 @@ int send_email(char *token, char *email, char * nick){
     returns the node containing the user struct that is associated with
     that socket
 */
-ll_node_t* get_user_from_socket(linked_list_t* users, int socket){
+ll_node_t* get_user_from_socket(linked_list_t* users, int socket)
+{
     ll_node_t *node = users->head;
     while (node != NULL){
         user_t *user = (user_t *) node->object;
@@ -152,12 +155,11 @@ ll_node_t* get_user_from_socket(linked_list_t* users, int socket){
     given a list of users and a nickname, returns the
     node containing the specified user
 */
-ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
+ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) 
+{
     ll_node_t *node = users->head;
     while (node != NULL) {
         user_t *user = (user_t *) node->object;
-        fprintf(stderr, "user->nick = %s, nick = %s, %lu %lu\n",user->nick, nick, strlen(user->nick), strlen(nick));
-        fprintf(stderr, "nick = %s\n", nick);
         if (strcmp(user->nick, nick) == 0) {
             return node;
         }
@@ -174,7 +176,8 @@ ll_node_t* get_user_from_nick(linked_list_t *users, char *nick) {
     returns NULL if not found
 
 */
-ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
+ll_node_t *get_channel(linked_list_t *channels, char *channel_name)
+{
     ll_node_t *node = channels->head;
     while (node != NULL) {
         channel_t *channel = (channel_t *) node->object;
@@ -190,7 +193,8 @@ ll_node_t *get_channel(linked_list_t *channels, char *channel_name){
     Strip trailing \r, \n or space from the given string.
 
 */
-void strip_newline(char *buf) {
+void strip_newline(char *buf) 
+{
     int i = strlen(buf) - 1;
     while (i >= 0) {
         if (buf[i] == '\n' || buf[i] == '\r' || buf[i] == ' ') {
@@ -341,6 +345,7 @@ void handle_register(server_state_t *state, int socket, char *parameters)
     sprintf(token_str, "%d", token);
     strcpy(new_user->token, token_str);
     send_email(token_str,email,nick);
+    free(token_str);
 
     ll_add(state->pending_users, new_user);
 
@@ -359,6 +364,7 @@ void handle_token(server_state_t *state, int socket, char *parameters)
     ll_node_t *pending_user_node = get_user_from_nick(state->pending_users, nick);
     if (pending_user_node != NULL) {
         user_t *pending_user = (user_t *) pending_user_node->object;
+        
         if (strcmp(pending_user->token, token_str) == 0) {
             // If the token matches the one we generate, add the user to the 
             // list of registered users and remove them from the list of
@@ -372,6 +378,7 @@ void handle_token(server_state_t *state, int socket, char *parameters)
             char *joinMsg = calloc(sizeof(char), strlen(joinFmt) + strlen(nick)*3 + 2);
             sprintf(joinMsg, joinFmt, nick, pending_user->email, nick);
             sendall(socket, joinMsg, strlen(joinMsg));
+            free(joinMsg);
         } else {
             // If the tokens don't match, send a WRONG TOKEN response to the user.
             char *wrongToken = "WRONG TOKEN\r\n";
@@ -449,7 +456,9 @@ void handle_quit(server_state_t *state, int socket)
                     sendall(user->socket, partCmd, strlen(partCmd));
                     user_to_send_part = user_to_send_part->next;
                 }
+
                 ll_remove(channel->users, node_to_remove);
+                free(partCmd);
 
                 break;
             }
@@ -510,6 +519,8 @@ void handle_join(server_state_t *state, int socket, char *parameters)
         fprintf(stderr, "channel->name = %s\n", channel->name);
         sendall(sender->socket, joinCmd, strlen(joinCmd));
     }
+
+    free(joinCmd);
 }
 
 /*
@@ -568,6 +579,8 @@ void handle_privmsg(server_state_t *state, int socket, char *parameters)
             }
         }
     }
+
+    free(privmsgCmd);
 }
 
 /* 
@@ -600,7 +613,8 @@ void handle_part(server_state_t *state, int socket, char *parameters)
             }
 
             // remove sender of PART from channel
-            ll_remove(channel->users, sender_node); 
+            ll_remove(channel->users, sender_node);
+            free(partCmd);
         }
     }
 }
@@ -639,6 +653,8 @@ void handle_names(server_state_t *state, int socket, char *parameters)
                 strcpy(names+currentBase,nameCmd);
                 currentBase = currentBase + strlen(nameCmd);
                 channel_names = channel_names->next;
+
+                free(nameCmd);
             }
 
             // send the list of users to the client
@@ -647,6 +663,8 @@ void handle_names(server_state_t *state, int socket, char *parameters)
                 user_t *sender = (user_t *) sender_node->object;
                 sendall(sender->socket, names, strlen(names));
             }
+
+            free(names);
         }
     }
 }
@@ -677,6 +695,7 @@ void handle_channels(server_state_t *state, int socket)
             currentBase = currentBase + strlen(nameCmd);
             channels = channels->next;
 
+            free(nameCmd);
         }
 
         // identify the sender using the socket value and send the list of 
@@ -686,6 +705,16 @@ void handle_channels(server_state_t *state, int socket)
             user_t *sender = (user_t *) sender_node->object;
             sendall(sender->socket, channel_list, strlen(channel_list));
         }
+
+        free(channel_list);
+    }
+}
+
+void to_upper(char *str)
+{
+    int i;
+    for (i = strlen(str) - 1; i >= 0; i--) {
+        str[i] = toupper(str[i]);
     }
 }
 
@@ -703,36 +732,45 @@ void handle_data(char * buf, int socket, struct server_state *state){
     }
 
     char *line = calloc(strlen(buf)+1,1);
+    char *old_line = line;
     strcpy(line, buf);  // copy of str to be tokenized
+
     char * command = NULL;
     command = strtok(line," ");
-
+    to_upper(command);
     char * parameter = strtok(NULL, "");
 
-    if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0){
+    fprintf(stderr, "[DATA] %s --\n", buf);    
+
+    if (strcmp(command,"NICK") == 0 || strcmp(command,"nick") == 0) {
         handle_nick(state, socket, parameter);
+    } else if (strcmp(command, "USER") == 0) {
+        // ignore USER commands because our server doesn't use them
     } else if (strcmp(command, "REGISTER") == 0) {
         handle_register(state, socket, parameter);
     } else if (strcmp(command, "TOKEN") == 0) {
         handle_token(state, socket, parameter);
     } else if (strcmp(command, "LOGIN") == 0) {
         handle_login(state, socket, parameter);
-    } else if (strcmp(command, "QUIT") == 0 || strcmp(command, "quit") == 0) {
+    } else if (strcmp(command, "QUIT") == 0) {
         handle_quit(state, socket);
-    } else if (strcmp(command,"JOIN") == 0 || strcmp(command,"join") == 0){
+    } else if (strcmp(command,"JOIN") == 0) {
         handle_join(state, socket, parameter);
-    } else if (strcmp(command,"PRIVMSG") == 0 || strcmp(command,"privmsg") == 0) {
+    } else if (strcmp(command,"PRIVMSG") == 0) {
         handle_privmsg(state, socket, parameter);
-    } else if (strcmp(command,"PART") == 0){
+    } else if (strcmp(command,"PART") == 0) {
         handle_part(state, socket, parameter);
-    } else if (strcmp(command,"NAMES") == 0 || strcmp(command,"names") == 0){
+    } else if (strcmp(command,"NAMES") == 0) {
         handle_names(state, socket, parameter);
-    } else if (strcmp(command,"CHANNELS") == 0 || strcmp(command,"channels") == 0){
+    } else if (strcmp(command,"CHANNELS") == 0) {
         handle_channels(state, socket);
     } else {
         char * uk = "Unknown command.\r\n";
+        printf("lon con me no\n");
         sendall(socket, uk, strlen(uk));
     }
+
+    free(old_line);
 }
 
 int main(void)
@@ -841,8 +879,6 @@ int main(void)
                     }
                 } else {
                     // handle data from a client
-                    //char *buf = calloc(1024, sizeof(char));
-                    //memset(buf, 0, sizeof(buf));
                     char *buf = recv_all(i);
 
                     if (strlen(buf) == 0) {

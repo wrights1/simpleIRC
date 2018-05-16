@@ -150,8 +150,9 @@ void parse_registered(global_state_t *state, int socket, char *buf)
 	}
 	if (strcmp(answer,"1")==0){
 		fprintf(stderr, "[simpleIRC] Password: ");
-		char *password= (char*) calloc(asize,1);
+		char *password = (char*) calloc(asize,1);
 		getline(&password, &asize,stdin);
+
 		while (strlen(password) < 6) {
 			fprintf(stderr, "[simpleIRC] Passwords can't be less than 6 "
 			"characters. Password: ");
@@ -163,6 +164,9 @@ void parse_registered(global_state_t *state, int socket, char *buf)
 		char *loginCmd = calloc(1024, sizeof(char));
 		sprintf(loginCmd, loginFmt, state->pending_nickname, password);
 		sendall(socket, loginCmd, strlen(loginCmd));
+
+		free(password);
+		free(loginCmd);
 	} else if (strcmp(answer, "2") == 0) {
 		fprintf(stderr, "[simpleIRC] Choose a nickname: ");
 		size_t nickSize = 255;
@@ -176,7 +180,11 @@ void parse_registered(global_state_t *state, int socket, char *buf)
 		char *nickCmd = calloc(1024, sizeof(char));
 		sprintf(nickCmd, "NICK %s\r\n", state->pending_nickname);
 		sendall(socket, nickCmd, strlen(nickCmd));
+
+		free(nickCmd);
 	}
+
+	free(answer);
 }
 
 void parse_not_registered(global_state_t *state, int socket, char *buf)
@@ -206,14 +214,23 @@ void parse_not_registered(global_state_t *state, int socket, char *buf)
 	char *registerCmd = calloc(1024, sizeof(char));
 	sprintf(registerCmd, "REGISTER %s %s %s\r\n", state->pending_nickname, email, password);
 	sendall(socket, registerCmd, strlen(registerCmd));
+
+	free(email);
+	free(password);
+	free(registerCmd);
 }
 
 void parse_token(global_state_t *state, int socket, char *buf)
 {
 	state->nickname_registered = 0;
 
-	fprintf(stderr, "We sent you an email with a verification code in it."
-	" Enter it here: ");
+	if (strcmp(buf, "TOKEN") == 0) {
+		fprintf(stderr, "We sent you an email with a verification code in it.");
+	} else {
+		fprintf(stderr, "Wrong token!");
+	}
+
+	fprintf(stderr," Enter the token here: ");
 	char *token = (char *) calloc(256, 1);
 	size_t n = 256;
 	getline(&token, &n, stdin);
@@ -226,6 +243,9 @@ void parse_token(global_state_t *state, int socket, char *buf)
 	char *tokenCmd = calloc(n, sizeof(char));
 	sprintf(tokenCmd, "TOKEN %s %s\r\n", state->pending_nickname, token);
 	sendall(socket, tokenCmd, strlen(tokenCmd));
+
+	free(token);
+	free(tokenCmd);
 }
 
 void parse_wrong_password(global_state_t *state, int socket, char *buf)
@@ -246,6 +266,9 @@ void parse_wrong_password(global_state_t *state, int socket, char *buf)
 	char *loginCmd = calloc(1024, sizeof(char));
 	sprintf(loginCmd, loginFmt, state->nickname, password);
 	sendall(socket, loginCmd, strlen(loginCmd));
+
+	free(password);
+	free(loginCmd);
 }
 
 void parse_user_logged_in(global_state_t *state, int socket, char *buf)
@@ -266,6 +289,8 @@ void parse_user_logged_in(global_state_t *state, int socket, char *buf)
 	char *nickCmd = calloc(1024, sizeof(char));
 	sprintf(nickCmd, "NICK %s\r\n", state->pending_nickname);
 	sendall(socket, nickCmd, strlen(nickCmd));
+
+	free(nickCmd);
 }
 
 
@@ -394,6 +419,8 @@ void parse_response(int socket, char* buf, global_state_t *state){
 					fprintf(stderr, " ============================== "
 						"JOINED CHANNEL %s ============================== \n", 
 						state->channel );
+
+					free(namesCmd);
 				} else {
 					// someone else join the channel
 					fprintf(stderr, "~~~~~~~~ %s has joined the channel ~~~~~~~~\n", 
@@ -425,6 +452,7 @@ void parse_response(int socket, char* buf, global_state_t *state){
 			free(nick);
 			free(content);
 			free(cmd);
+			free(recipient);
 		}
 
 		else if (pmret != REG_NOMATCH) {
@@ -500,6 +528,14 @@ void quit_program(global_state_t *state, int socket)
 {
 	char *quit_command = "QUIT\r\n";
 	sendall(socket, quit_command, strlen(quit_command));
+
+	// free resources
+	free(state->nickname);
+	free(state->pending_nickname);
+	free(state->channel);
+	free(state->pending_channel);
+	free(state);
+
 	exit(0);
 }
 
@@ -509,6 +545,8 @@ void send_names_command(global_state_t *state, int socket)
 	char *namesCmd = calloc(1024, strlen("NAMES ") + strlen(state->channel));
 	sprintf(namesCmd, namesFmt, state->channel);
 	sendall(socket, namesCmd, strlen(namesCmd));
+
+	free(namesCmd);
 }
 
 void send_nick_command(global_state_t *state, int socket, char *command)
@@ -621,6 +659,8 @@ int chat(int socket)
 					sendall(socket, str, strlen(str));
 				}
 			}
+
+			free(str);
 		}
 
 		if (FD_ISSET(socket, &readfds)){
